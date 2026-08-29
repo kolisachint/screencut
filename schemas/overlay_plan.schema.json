@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "OverlayIntent": {
+      "additionalProperties": false,
+      "description": "One overlay, anchored in source time and normalized source space.\n\n`t_in`/`t_out` are both null for an overlay that spans the whole output \u2014 the\nprogress pill is the case. That is not a second time base (\u00a74.5): an element\nspanning the whole output needs no anchor at all, so compile runs it from zero\nto the end of whatever it produced. Anything positioned at a *moment* is\npositioned relative to content, which is a source-time anchor like any other,\nand compile drops it if the moment lands inside a removal.",
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normalized source position. Null for a whole-output overlay, which has nothing to point at.",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "t_in": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T In",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "t_out": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Out",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "template": {
+          "$ref": "#/$defs/OverlayTemplate",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "title": "OverlayIntent",
+      "type": "object"
+    },
+    "OverlayTemplate": {
+      "description": "The closed set. Adding one is a template plus a `spec_version` bump.",
+      "enum": [
+        "callout_arrow",
+        "highlight_box",
+        "label_chip",
+        "progress_pill"
+      ],
+      "title": "OverlayTemplate",
+      "type": "string"
+    },
+    "Point": {
+      "additionalProperties": false,
+      "description": "A position in normalized source coordinates.",
+      "properties": {
+        "x": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point",
+      "type": "object"
+    }
+  },
+  "$id": "https://screencut.local/schemas/overlay_plan.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The fragment `plan_overlays` returns (\u00a77.2). Small and heavily typed on\npurpose: normalized coordinates and enum template names mean most wrong\nanswers are *invalid* answers, which is risk R5's real mitigation.",
+  "properties": {
+    "overlays": {
+      "items": {
+        "$ref": "#/$defs/OverlayIntent"
+      },
+      "title": "Overlays",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "model",
+        "stage": "plan_overlays"
+      }
+    }
+  },
+  "title": "OverlayPlan",
+  "type": "object"
+}

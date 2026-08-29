@@ -1,0 +1,11 @@
+# Per-job directories and screencut.db (architecture.md §5.4). Rooted, so that
+# tests/data/ — which holds committed fixtures — is not swept up with it.
+/data/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+node_modules/

@@ -3,8 +3,9 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Nothing here is built yet. Phases are sized to be picked up cold: each states its goal,
-what gets built, how you know it is finished, and what is deliberately excluded.
+Phase 1 is built; phase 0 is a spike on the target machine and has not been run. Phases
+are sized to be picked up cold: each states its goal, what gets built, how you know it is
+finished, and what is deliberately excluded.
 
 ## Ordering principles
 
@@ -62,7 +63,7 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 
 ---
 
-## Phase 1 — Spec and fixtures
+## Phase 1 — Spec and fixtures — **built**
 
 **Goal:** the data model everything else is written against.
 

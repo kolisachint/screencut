@@ -1,6 +1,8 @@
 # screencut — Design & Architecture
 
-Status: design, pre-implementation. Nothing in this document is built yet.
+Status: phase 1 built (`spec/`, `ingest/`, `schemas/`). Everything from §5's pipeline
+onward is still design — see [`implementation-phases.md`](implementation-phases.md) for
+what is built and what is next.
 
 ## 1. What this is
 

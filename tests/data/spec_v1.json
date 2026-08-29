@@ -1,0 +1,65 @@
+{
+  "spec_version": 1,
+  "job_id": "hand-written-v1",
+  "created_at": "2025-11-02T09:30:00Z",
+  "source": {
+    "source_id": "take-1",
+    "path": "source/take.mp4",
+    "events_path": "source/events.json",
+    "duration": 10.0,
+    "width": 2560,
+    "height": 1440,
+    "fps": 60.0,
+    "has_audio": true
+  },
+  "narration": {
+    "source": "recorded",
+    "script": null,
+    "voice_reference_path": null,
+    "voice_consent_note": null
+  },
+  "focus": {
+    "points": [
+      {"t": 0.0, "x": 0.5, "y": 0.5, "weight": 0.3, "kind": "movement"},
+      {"t": 2.0, "x": 0.31, "y": 0.42, "weight": 1.0, "kind": "click"},
+      {"t": 6.5, "x": 0.68, "y": 0.55, "weight": 1.0, "kind": "click"}
+    ]
+  },
+  "edit": {
+    "removals": [
+      {"t_in": 8.0, "t_out": 10.0, "kind": "silence", "proposed_by": "trim"}
+    ],
+    "segments": [
+      {"t_in": 0.0, "t_out": 4.0, "tier": "essential", "reason": "the claim"},
+      {"t_in": 4.0, "t_out": 8.0, "tier": "optional", "reason": "the aside"}
+    ]
+  },
+  "captions": [
+    {
+      "t_in": 0.0,
+      "t_out": 2.0,
+      "words": [
+        {"t_in": 0.0, "t_out": 1.0, "text": "hello", "emphasis": false},
+        {"t_in": 1.0, "t_out": 2.0, "text": "there", "emphasis": true}
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "template": "label_chip",
+      "text": "v1",
+      "anchor": {"x": 0.31, "y": 0.42},
+      "t_in": 2.0,
+      "t_out": 4.0
+    },
+    {"template": "progress_pill", "text": "", "anchor": null, "t_in": null, "t_out": null}
+  ],
+  "audio": {
+    "narration_gain_db": 0.0,
+    "music_path": null,
+    "music_gain_db": -18.0,
+    "duck_db": -12.0,
+    "target_lufs": -14.0,
+    "true_peak_ceiling_dbtp": -1.0
+  }
+}
