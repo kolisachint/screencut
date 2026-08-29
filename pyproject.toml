@@ -13,6 +13,9 @@ dependencies = [
     "cairosvg>=2.7",
 ]
 
+[project.scripts]
+screencut = "runner.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -20,7 +23,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 # The repository layout of docs/architecture.md §12 is the package layout.
-packages = ["spec", "ingest", "plan", "prefs", "compile"]
+packages = ["spec", "ingest", "plan", "prefs", "compile", "runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

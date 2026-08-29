@@ -51,6 +51,9 @@ def prepare(
     job_dir: Path,
     *,
     encoder: Encoder | None = None,
+    work_dir: Path | None = None,
+    out_path: Path | None = None,
+    focus=None,
 ) -> RenderPlan:
     """Build the graph and write everything it references into the job directory.
 
@@ -61,10 +64,10 @@ def prepare(
     """
     job_dir = Path(job_dir)
     timeline = project(spec, profile)
-    focus = plan_focus(spec, profile)
+    focus = focus if focus is not None else plan_focus(spec, profile)
     encoder = encoder or profile.encode.encoder
 
-    work_dir = Path("renders") / profile.name
+    work_dir = work_dir or Path("renders") / profile.name
     (job_dir / work_dir).mkdir(parents=True, exist_ok=True)
 
     assets = [
@@ -94,21 +97,22 @@ def prepare(
     (job_dir / work_dir / AUDIO_COMMANDS_NAME).write_text(audio_commands)
     (job_dir / work_dir / ASS_NAME).write_text(ass)
 
-    out_path = Path("renders") / f"{spec.job_id}_{profile.name}.mp4"
+    out_path = out_path or Path("renders") / f"{spec.job_id}_{profile.name}.mp4"
     inputs: list[str] = ["-i", spec.source.path]
     if spec.audio.music_path:
         inputs += ["-stream_loop", "-1", "-i", spec.audio.music_path]
     for asset in assets:
         inputs += ["-i", str(asset.path.relative_to(job_dir))]
 
-    args = [
+    # Split deliberately: everything up to the maps is what `compile` decided, and
+    # the encoder and the filename are what `render` decides. Keeping them apart is
+    # what lets a change of encoder re-run the render and not the compile (§5.2).
+    graph_args = [
         "ffmpeg", "-y", "-hide_banner", "-nostdin", "-loglevel", "error",
         *inputs,
         "-filter_complex_script", str(work_dir / GRAPH_NAME),
         "-map", "[vout]",
         "-map", "[aout]",
-        *encode_args(profile, encoder),
-        str(out_path),
     ]
     return RenderPlan(
         profile=profile,
@@ -122,7 +126,8 @@ def prepare(
         audio_commands=audio_commands,
         ass=ass,
         assets=assets,
-        ffmpeg_args=args,
+        graph_args=graph_args,
+        ffmpeg_args=[*graph_args, *encode_args(profile, encoder), str(out_path)],
     )
 
 

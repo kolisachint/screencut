@@ -1,8 +1,9 @@
 # screencut — Design & Architecture
 
-Status: phases 1 and 2 built — the spec (`spec/`), the fixture generator (`ingest/`),
-`plan_focus` (`plan/`), and the FFmpeg compiler (`compile/`). The pipeline still runs one
-profile at a time from a CLI; the cache, real media, and every model stage are ahead. See
+Status: phases 1 to 3 built — the spec (`spec/`), the fixture generator (`ingest/`),
+`plan_focus` (`plan/`), the FFmpeg compiler (`compile/`), and the runner, cache and job
+record (`runner/`). `screencut run <job>` renders a job to every profile and skips whatever
+the cache already holds. Real media and every model stage are ahead. See
 [`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is

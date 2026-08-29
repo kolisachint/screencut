@@ -3,7 +3,7 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phases 1 and 2 are built; phase 0 is a spike on the target machine and has not been run. Phases
+Phases 1 to 3 are built; phase 0 is a spike on the target machine and has not been run. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
 
@@ -173,7 +173,7 @@ phase 2 onward, which is the manual escape hatch for any job the model gets wron
 
 ---
 
-## Phase 3 — Runner, cache, and persistence
+## Phase 3 — Runner, cache, and persistence — **built**
 
 **Goal:** make re-running cheap, which is what makes the review loop possible at all.
 
@@ -200,6 +200,23 @@ phase 2 onward, which is the manual escape hatch for any job the model gets wron
 - Bumping a `stage_version` invalidates that stage and its dependents, and nothing else.
 
 **Not in this phase:** `RemoteRunner`, distributed anything.
+
+**How it came out.** The load-bearing decision is that **a stage fingerprints what
+it reads**, not the whole spec. `plan_focus` hashes the source dimensions, the
+focus track and the profile's geometry; `compile` hashes the edit and the profile
+*minus* the encoder; `render` hashes the media contents and the encoder alone. So a
+caption edit re-runs compile and render, and changing `crf` re-encodes without
+recompiling. Hashing the spec wholesale would have been simpler and would have
+made §8's argument false.
+
+Invalidation propagates because a stage's inputs include its upstream stages'
+cache keys — which is also why bumping one `stage_version` touches that stage and
+its dependents and nothing beside them.
+
+Renders are cached under their key like every other artifact and **hard-linked**
+into `renders/` under a stable name. The cache stays immutable and content-
+addressed, `renders/` is a view onto it, and 256GB (§16) does not stretch to two
+copies of everything.
 
 ---
 

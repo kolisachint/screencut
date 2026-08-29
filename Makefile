@@ -1,5 +1,5 @@
 # screencut — see docs/architecture.md and docs/implementation-phases.md.
-.PHONY: help install schema types generated check-generated typecheck test fixture render check clean
+.PHONY: help install schema types generated check-generated typecheck test fixture run check clean
 
 FIXTURE ?= data/fixtures/demo01
 ENCODER ?= software
@@ -32,9 +32,8 @@ test:  ## Run the test suite.
 fixture:  ## Generate the synthetic fixture job, source video included.
 	python3 -m ingest.fixtures --out $(FIXTURE)
 
-render: fixture  ## Render the fixture to both profiles. ENCODER=videotoolbox on macOS.
-	python3 -m compile.render --job $(FIXTURE) --profile shorts_9x16 --encoder $(ENCODER)
-	python3 -m compile.render --job $(FIXTURE) --profile demo_16x9 --encoder $(ENCODER)
+run: fixture  ## Run the fixture job through the pipeline. ENCODER=videotoolbox on macOS.
+	python3 -m runner.cli run $(FIXTURE) --encoder $(ENCODER)
 
 check: test check-generated typecheck  ## Everything CI would run.
 

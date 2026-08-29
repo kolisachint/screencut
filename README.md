@@ -15,11 +15,11 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 and 2 are built.** The data model everything else is written against —
-its invariants, its versioning, its generated schemas and types — plus the
-compiler that turns it into video: `plan_focus`, the time projection, ASS
-captions, SVG overlays, and an FFmpeg graph that renders one spec to two aspect
-ratios at two different lengths.
+**Phases 1 to 3 are built.** The data model everything else is written against;
+the compiler that turns it into video — `plan_focus`, the time projection, ASS
+captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios
+at two different lengths; and the runner that makes re-running cheap, which is
+what makes the review loop possible at all.
 
 Phase 0 is an environment spike on the target machine — a base-model M1 MacBook
 Air, 8GB, fanless — and has not been run. It answers whether cursor events are
@@ -27,18 +27,18 @@ extractable (risk R1), whether F5-TTS is viable locally, and what each stage
 costs in memory, which on 8GB is the number that decides the rest. Nothing in
 phase 1 depends on those answers, which is why it could go first.
 
-Next is phase 3 — the runner, the content-addressed cache and SQLite, which is
-what makes the review loop affordable.
+Next is phase 4 — real ingest and transcription, and the first output worth
+posting.
 
 ## Quickstart
 
 ```sh
 make install     # the package and its dev dependencies
-make render      # a synthetic job, rendered to both profiles (needs ffmpeg)
+make run         # a synthetic job through the whole pipeline (needs ffmpeg)
 make check       # tests, generated-artifact drift, TypeScript typecheck
 ```
 
-On the target machine, `make render ENCODER=videotoolbox` uses the hardware encoder.
+On the target machine, `make run ENCODER=videotoolbox` uses the hardware encoder.
 The default is `software`, which is slower and byte-reproducible — what §11 hashes.
 
 ```python
@@ -67,6 +67,7 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 | `plan/` | `plan_focus` — the crop path and the zoom regions, both deterministic |
 | `compile/` | The time projection, ASS captions, SVG overlay templates, the FFmpeg graph |
 | `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
+| `runner/` | The stage contract, `LocalRunner`, the content-addressed cache, SQLite |
 | `schemas/` | Generated — four JSON Schemas and the TypeScript types. Regenerate with `make generated` |
 | `tests/` | The invariants, the round-trip, the migration, the graph, and real renders |
 

@@ -72,7 +72,10 @@ class RenderPlan:
     audio_commands: str
     ass: str
     assets: list[OverlayAsset] = field(default_factory=list)
+    graph_args: list[str] = field(default_factory=list)
+    """Inputs, filter graph and stream maps — what `compile` decided."""
     ffmpeg_args: list[str] = field(default_factory=list)
+    """`graph_args` plus the encoder and the output path — what `render` decides."""
 
 
 # --- per-frame geometry ------------------------------------------------------
