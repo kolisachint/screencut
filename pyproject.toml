@@ -23,7 +23,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 # The repository layout of docs/architecture.md §12 is the package layout.
-packages = ["spec", "ingest", "plan", "prefs", "compile", "runner"]
+packages = ["spec", "ingest", "plan", "prefs", "compile", "runner", "verify"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
