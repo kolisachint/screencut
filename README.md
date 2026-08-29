@@ -12,6 +12,8 @@ anywhere in this design, and adding one would replace it rather than extend it.
 - [`docs/architecture.md`](docs/architecture.md) — the design and the reasoning.
 - [`docs/implementation-phases.md`](docs/implementation-phases.md) — the order of
   work and what "done" means at each step.
+- [`AGENTS.md`](AGENTS.md) — how to work on the repo: layout, invariants,
+  conventions, and the traps this codebase has already sprung.
 
 ## Status
 
