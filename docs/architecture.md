@@ -70,8 +70,11 @@ Recorded so future-us knows what was chosen deliberately versus what merely happ
 | 16 | State | SQLite + files on disk | Media in per-job directories, records and cache index in SQLite. See §5.4. |
 | 17 | Hardware | Apple Silicon | ASR backend must be swappable; cache becomes load-bearing; VideoToolbox for encode. See §16. |
 | 18 | Content origin | Every frame is captured, never synthesized | No image, video, or B-roll model exists in this design. See §1.1. |
-| 19 | Editorial decisions | Cuts and transcript cleanup are model stages | `plan_edit` fills the `EditSpec` in/out points nothing else produces. See §4.4. |
+| 19 | Editorial decisions | Arithmetic proposes, the model reviews and tiers | `trim` is deterministic; `plan_edit` overrides it and ranks. Gives §7.4 a decent floor. See §4.4. |
 | 20 | Voice | F5-TTS cloned from your own reference audio | Performance substitution, not content generation — the one synthesis this design allows, and only of you. See §1.1. |
+| 21 | Cuts vs aspect | Segments tiered once, selected per profile by duration budget | Keeps cuts aspect-agnostic without claiming two aspects want the same edit. See §4.4.1. |
+| 22 | Edit application | `EditDecisions` is projected at compile, never baked into the spec | Everything stays in source time; a cut correction costs a re-render, not a re-plan. See §4.5. |
+| 23 | Golden replay | Checked by field origin — strict deterministic, distributional model | One tolerance cannot serve both without becoming useless for the strict half. See §11.1. |
 
 ## 3. Principles
 
@@ -103,8 +106,11 @@ from source start. **No pixels anywhere.** This is what the planner produces, wh
 review UI edits, and what the learner diffs.
 
 **`RenderProfile`** — `shorts_9x16`, `demo_16x9`, `still_4x5`. Resolution, framerate,
-safe-area insets, caption box geometry and type scale, encode settings, and the
-projection rule that turns a `FocusTrack` into either zoom keyframes or a crop path.
+safe-area insets, caption box geometry and type scale, encode settings, a
+`duration_budget`, and two projection rules: the one that turns a `FocusTrack` into zoom
+keyframes or a crop path, and the one that turns tiered `segments` into a duration
+(§4.4.1). A profile carries **two** projections because a render differs from its source
+in space *and* in time.
 
 One `EditSpec` × N `RenderProfile` = N renders.
 
@@ -154,23 +160,93 @@ Where `FocusTrack` answers "where do we look", `EditDecisions` answers "what sur
 It is the other half of the `EditSpec`, and under §1.1 it is the part that makes this an
 editing tool rather than a captioning tool.
 
-Two fields, both produced by `plan_edit` (§7.1):
+Two fields. Both are in **source time**, like everything else in `EditSpec` (§4.1), and
+neither is applied until `compile` — see §4.5, which is the part that makes the review
+loop affordable.
 
-**`cuts`** — the in/out points §4.1 always listed and nothing previously produced. A list
-of `(t_in, t_out, reason)` retained segments in source time. Dead air, a fumbled restart,
-the thirty seconds spent finding a menu — removed. `reason` is retained because the
-review UI has to show *why* something was cut before a person can meaningfully accept it.
+**`removals`** — ranges that never survive, in any profile. Silence, dead air, filler
+words, false starts. `(t_in, t_out, kind)` where `kind` is `silence`, `filler`,
+`false_start`, or `redundant`. Removal is expressed as a range rather than as rewritten
+text, and that is what keeps this an edit: the audio and the caption are cut at the same
+instants, from the same decision, and nothing is put into your mouth that you did not
+say.
 
-**`transcript_edits`** — disfluency removal as timing ranges, not as rewritten text. A
-removed "um" is `(t_start, t_end, kind)`, resolved against the word timings `align`
-already produces. Modelling the edit as a range rather than a replacement string is what
-keeps this an edit: the audio and the caption are cut at the same instants, from the same
-decision, and nothing is put into your mouth that you did not say.
+**`segments`** — the surviving content, each carrying a **tier**: `essential`,
+`supporting`, or `optional`, plus a `reason`. Tiers are not cuts. They are a ranking, and
+which of them survive is decided per profile (§4.5).
 
-Both are ordinary spec fields, which means they are diffable in review, learnable in §10
-(this is what `cut pacing` refers to), and covered by the golden set. Neither is allowed
-to invent a segment that is not in the source — a `t_out` beyond source duration is a
-schema violation, not a judgement call.
+Together they **partition the source**: every second is either in a removal or in a
+segment, with no gaps and no overlaps. That totality is a schema-level invariant, not a
+convention — it is cheap to check and it catches a whole class of model error before
+anything renders (§9.1).
+
+### 4.4.1 Why tiers rather than cuts
+
+A 60-second demo and a 20-second short are not the same edit. Cuts are the most
+aspect-*dependent* decision in the system, and putting a single cut list in the
+aspect-agnostic layer would assert they are the same.
+
+Tiering separates the two decisions that were tangled together:
+
+- **How good is this bit?** Aspect-independent, taste, done once by `plan_edit`.
+- **How much fits?** Aspect-dependent, arithmetic, done per profile.
+
+`RenderProfile` gains a `duration_budget`, and the projection rule is: include every tier
+at or above the highest threshold that fits the budget. Three tiers, three possible
+selections, no search. `shorts_9x16` lands on `essential`; `demo_16x9` typically takes
+everything.
+
+This is the §4.3 pattern applied to time. `FocusTrack` is rated once and projected per
+profile into a crop path or zoom keyframes; `segments` are rated once and projected per
+profile into a duration. One spec, N renders survives intact (decision #6), the
+per-profile decision stays arithmetic (principle 3), and the budget is a scalar the
+preference store can learn per profile — which is exactly the argument §4.1 already makes
+for caption geometry.
+
+When `essential` alone overruns the budget, the profile cannot be satisfied. That is a
+verification finding with a number attached, not a crash and not a silent overrun (§9.1).
+
+### 4.5 Cuts are a projection, not a rewrite
+
+`EditDecisions` is **never applied to the spec**. Captions, overlays and the `FocusTrack`
+all stay in source time, and `compile` performs the removal-and-selection as part of
+producing the filter graph — remapping timings, splitting caption blocks at boundaries,
+and dropping overlays anchored inside removed ranges.
+
+This is the same discipline §4.1 already applies to space. Nothing commits to a
+coordinate system until the compiler projects it, and time is a coordinate system.
+
+Three things fall out, and the third is the reason this matters:
+
+1. **Nothing downstream of `align` depends on `plan_edit`.** `plan_captions` and
+   `plan_overlays` run parallel to it, against the full source timeline.
+2. **Caption trimming is free.** §6.2 already carries per-word timings for kinetic
+   captions; trimming a block to a range is a word-level operation on data that is
+   already there. The field that existed for a later phase turns out to be what makes
+   this one deterministic.
+3. **Adjusting a cut in review re-runs `compile` and `render`, and nothing else.** If
+   cuts were baked into the spec instead, moving one boundary would re-plan captions and
+   overlays — and `plan_overlays` is a model call. That would put a model call behind
+   every cut correction, which is precisely the failure §8 says kills the review loop.
+
+The cost is that `plan_overlays` sees material that will later be cut and may waste an
+overlay on it. Compile drops it deterministically. A wasted overlay is worth a stage
+dependency removed.
+
+### 4.6 Deterministic trim tunables
+
+The `trim` stage (§7.1) proposes `removals` by arithmetic, governed by scalars in the
+same manner as §4.3:
+
+| Tunable | Role |
+|---|---|
+| `silence_db` | Level below which audio counts as silence |
+| `min_silence_ms` | Shortest gap worth removing — below this it is a beat, not dead air |
+| `keep_pad_ms` | Padding retained either side of a removal, so cuts do not clip breath |
+| `filler_words` | The closed list. A list, not a model. |
+
+Every one is learnable by median under §10, and every one is a scalar you can also just
+set by hand when a job needs it.
 
 ## 5. Pipeline
 
@@ -180,10 +256,11 @@ flowchart TD
     ingest --> draft["script_draft (conditional)"]
     draft --> tts[tts]
     tts --> align[align]
-    align --> edit[plan_edit]
-    edit --> caps[plan_captions]
+    align --> trim[trim]
+    trim --> edit[plan_edit]
+    align --> caps[plan_captions]
     focus --> caps
-    edit --> stick[plan_overlays]
+    align --> stick[plan_overlays]
     focus --> stick
     caps --> compile[compile per profile]
     stick --> compile
@@ -197,11 +274,10 @@ flowchart TD
 `plan_focus` has no audio dependency and runs parallel to TTS. Everything else waits on
 `align`, because narration timing drives caption timing and edit pacing.
 
-`plan_edit` sits between `align` and everything downstream of it, and the ordering is
-load-bearing: captions, overlays and the compiler all work in the *edited* timeline, so
-cuts must be decided before anything is laid against them. Deciding cuts afterwards means
-re-timing captions and re-anchoring overlays around removed ranges — the same work done
-twice, and wrong the second time.
+`trim` and `plan_edit` run **parallel to** `plan_captions` and `plan_overlays`, not ahead
+of them. Everything works in source time and only `compile` applies the edit (§4.5). The
+fan-out after `align` is the shape that makes a cut correction cost a re-render instead of
+a re-plan.
 
 ### 5.1 Stage contract
 
@@ -296,6 +372,12 @@ word-highlight rendering is a later, purely-compiler-side phase: per-word ASS ov
 tags with active-word colouring. Because the spec already carries the data, that phase
 changes no schema, invalidates no golden specs, and needs no migration.
 
+Those word timings turned out to have a second use nobody planned for. §4.5 needs
+`compile` to trim a caption block to a time range when a cut lands inside it, and per-word
+timings make that a deterministic word-level operation rather than an estimate. A field
+carried for a later phase is what makes an earlier one exact — which is the argument for
+this shape better than any reasoning about kinetic captions.
+
 This is the general shape to aim for — **model the end state, render the simple case** —
 and it is why the load-bearing milestone in the phase plan does not have hand-authored per-word ASS
 timing in its path.
@@ -328,8 +410,11 @@ much as the yeses.
 |---|---|---|
 | Ingest / recorder adapter | No | Format translation. Writing the adapter is agent work; running it is not. |
 | `plan_focus` | No | Arithmetic over `FocusTrack` (§4.3) |
-| `plan_edit` — cuts | **Yes** | What survives is *the* editorial decision (§4.4) |
-| `plan_edit` — transcript cleanup | **Yes** | Disfluency removal over word timings (§4.4) |
+| `trim` — silence, dead air | No | Level and duration thresholds (§4.6) |
+| `trim` — filler words | No | A closed word list against the transcript. A list is not a model. |
+| `plan_edit` — reviewing the trim | **Yes** | Whether a silence was a beat is taste, even though finding it was arithmetic |
+| `plan_edit` — false starts, restarts | **Yes** | Language |
+| `plan_edit` — segment tiers | **Yes** | What is worth keeping is *the* editorial decision (§4.4) |
 | `script_draft` | Yes | Language |
 | `align` | No | Forced alignment (§5.3) |
 | `plan_captions` — timing, layout | No | Derived from `align` output and profile geometry |
@@ -345,9 +430,20 @@ much as the yeses.
 | Preference learner (§10) | No | Statistics. Auditability beats marginal accuracy. |
 | Golden replay (§11) | No | Field diff with per-field tolerances |
 
-Two rows carry most of the product's weight. `plan_edit`'s two are the stages a viewer
-would actually describe as "edited"; everything above them is framing and everything below
-is decoration.
+`trim` and `plan_edit` carry most of the product's weight, and the split between them is
+principle 3 applied honestly. Finding a silence is a threshold comparison. Finding an
+"um" is a lookup. Neither deserves a model, and giving them one would have made the
+degradation path in §7.4 far worse than it needs to be.
+
+**Arithmetic proposes, the model reviews.** `trim` emits proposed `removals`; `plan_edit`
+receives them alongside the transcript and may reject any of them, add its own, and
+assign tiers. The reason the model sees the proposal rather than being kept away from it:
+a two-second gap can be dead air or a deliberate beat, and only one of those is
+removable. Arithmetic cannot tell them apart and should not be the last word.
+
+The cost is honest — a model that can override a correct trim can also override it
+wrongly, where a strict split could not. That is bounded by §9.1 and visible in review,
+and it is worth paying for the beat.
 
 ### 7.2 Schema in, validated fragment out
 
@@ -400,12 +496,17 @@ records the degradation in the job record so review shows it. Verification still
 
 | Stage | Degrades to |
 |---|---|
-| `plan_edit` — cuts | No cuts; the full take survives |
-| `plan_edit` — cleanup | No cleanup; verbatim transcript |
+| `plan_edit` | `trim`'s proposed `removals`, every segment `essential` |
 | `script_draft` | Job halts — there is no script to fall back to |
 | Emphasis | No emphasis markers |
 | `plan_overlays` | No overlays |
 | Metadata sidecar | Script-derived title and description |
+
+**The first row is why the `trim` split earns its place.** Before it, a failed `plan_edit`
+degraded to "keep everything" — the unedited take this project exists to avoid. Now it
+degrades to a silence-trimmed, filler-stripped video: not the edit you wanted, but a real
+one. The deterministic floor is decent, which means the model is adding polish rather than
+carrying the feature alone, and risk R4 is correspondingly milder.
 
 Failure here means any of: nonzero exit, unparseable stdout, schema validation failing
 twice, or a timeout. Collapsing them into one "the stage did not produce a fragment"
@@ -455,10 +556,18 @@ Three layers. The first two exist to keep garbage from reaching a person.
   fully inside the profile's safe area
 - Overlay anchors inside safe area and not occluding a caption box
 - **Crop-path continuity** — no crop delta above `max_crop_delta_per_frame`
-- **Cut integrity** — every `EditDecisions` segment lies inside the source, segments do
-  not overlap or invert, and the retained total matches the rendered duration. This is
-  the arithmetic half of trusting §4.4: it cannot tell you a cut was tasteful, but it can
-  tell you the model did not hallucinate a segment that was never recorded.
+- **Edit integrity** — `removals` and `segments` partition the source exactly: inside
+  bounds, non-inverted, non-overlapping, no gaps. The selected tiers' total duration
+  matches the rendered duration. This is the arithmetic half of trusting §4.4 — it cannot
+  tell you a cut was tasteful, but it can tell you the model did not hallucinate a moment
+  that was never recorded, and totality means it cannot quietly lose one either.
+- **Budget satisfaction** — per profile, whether the selected tiers fit `duration_budget`.
+  `essential` alone overrunning the budget is the expected way this fails (§4.4.1), and it
+  is reported with the overrun in seconds rather than silently rendering long.
+- **Trim override rate** — what fraction of `trim`'s proposed removals `plan_edit`
+  rejected. Not a pass/fail; a number on the report. A model rejecting nearly all of them
+  is either right about your recording style or has stopped reading the proposal, and both
+  are worth seeing before the learner starts averaging over it.
 
 That last check earns its place: judder is *the* failure mode of automated vertical
 reframing, it is invisible in a still frame, and it is catchable with arithmetic.
@@ -474,13 +583,16 @@ removes disfluencies and cuts segments, the rendered audio is *supposed* to diff
 the raw transcript. Diffing against the raw transcript would flag every successful edit as
 a failure, and a check that fires on correct behaviour gets ignored within a week.
 
-So the diff runs against the **post-`plan_edit` expected transcript** — the script as the
-spec says it should sound after cuts. Differences then fall into three classes:
+So the diff runs against the **expected transcript**: the source transcript minus
+`removals`, minus every segment below this profile's tier threshold. That is a
+deterministic computation over the spec — no model, no guesswork — and it is
+**per profile**, since two profiles select different tiers and therefore expect different
+audio. Differences then fall into three classes:
 
 | Class | Meaning |
 |---|---|
 | Matches expected | Pass |
-| Removed range that `EditDecisions` accounts for | Expected — the edit worked |
+| A range `EditDecisions` accounts for | Expected — the edit worked |
 | Anything else | Real failure — mispronunciation, desync, truncation, a cut that landed wrong |
 
 The third class is what this check exists for, and it now also catches a failure mode that
@@ -504,9 +616,13 @@ auditability matters more than marginal accuracy.
 Fonts, forbidden voices, fixed output dimensions.
 
 **Learned numeric defaults** (`prefs/defaults.json`) — per render profile. Rolling median
-over accepted specs for every tunable in §4.3 plus caption geometry, music level, and cut
-pacing (now a real quantity — the retained-fraction and segment-length distribution over
-§4.4's `cuts`). Plain statistics. Given decision #5, this tier does most of the work.
+over accepted specs for every tunable in §4.3 and §4.6, plus caption geometry, music
+level, and each profile's `duration_budget` — which is what "cut pacing" now concretely
+means (§4.4.1). Plain statistics. Given decision #5, this tier does most of the work.
+
+The budget is the most valuable thing here. It is a single scalar per profile that decides
+how aggressively that profile cuts, it is corrected every time you lengthen or shorten a
+render in review, and unlike a tier assignment it is a number rather than a judgement.
 
 **Exemplars** (`prefs/exemplars/`) — accepted specs retrieved by similarity and few-shot
 into the LLM stages. Only relevant to §7.1's model-using stages.
@@ -532,14 +648,40 @@ position late in the phase plan.
 Archived fixtures plus their approved `EditSpec`s, in `golden/`.
 
 Renders are slow, so regression compares **specs, not pixels**: replan each fixture and
-diff the proposed spec against the approved one field-by-field with per-field tolerances.
-Render only two or three for frame hashing.
+diff the proposed spec against the approved one. Render only two or three for frame
+hashing.
 
 Any change to prompts, rules, or learned defaults replays the full set before taking
 effect. Preference updates are code changes: versioned, diffable, revertable.
 
+### 11.1 Two kinds of field, two kinds of check
+
+Field-by-field tolerance was the right check when planning was deterministic. It is not,
+on its own, once model stages write spec fields: replaying the same fixture twice produces
+different specs, so prompt-change drift and sampling noise look identical. Tolerances wide
+enough to absorb model variance are too wide to catch the regressions the golden set
+exists for.
+
+So every spec field carries its **producing stage** as schema metadata, and the field's
+origin decides how it is checked:
+
+| Origin | Check |
+|---|---|
+| Deterministic (`plan_focus`, `trim`, `plan_captions`, audio) | Strict per-field tolerance, single run. Exactly as before. |
+| Model (`plan_edit` tiers, emphasis, overlays, metadata) | Distributional over N runs: retained fraction, segment and tier counts, boundary drift percentiles. |
+
+Keeping the strict half strict is the point. Most of the spec — and most regressions — are
+still deterministic, and a change to `plan_focus` should fail loudly on one run rather than
+disappear into a distribution. The model fields get a weaker check because a weaker check
+is the true one; pretending otherwise would make the whole set untrustworthy rather than
+just the uncertain part of it.
+
+Field origin is schema metadata rather than a lookup table maintained beside the code,
+because the two drift apart and the version that is wrong is always the table.
+
 At least one fixture is **deliberately bad** — clipped audio, overlapping captions,
-juddering crop — so §9's checks are tested against known-bad rather than only known-good.
+juddering crop, a cut landing mid-word — so §9's checks are tested against known-bad
+rather than only known-good.
 
 ## 12. Repository layout
 
@@ -586,18 +728,17 @@ time, the next lever is a gate on `plan_overlays` specifically, not on the whole
 mode most likely to be noticed late.
 
 **R4 — Cut quality is the product, and it is unproven.** §4.4 makes a model responsible
-for the most consequential decision a viewer perceives. Unlike zoom (arithmetic, §4.3) or
-captions (derived, §6.2), there is no deterministic fallback that is *good* — §7.4's
-fallback is "keep everything", which is exactly the unedited take this project exists to
-avoid.
+for the most consequential decision a viewer perceives, and taste is the one thing no
+schema constrains.
 
-*Mitigation:* `plan_edit` lands early (phase 5) rather than late, precisely so a bad
-answer is discovered while it is still cheap to change the approach. §9.1's cut-integrity
-check bounds the damage to "wrong taste" rather than "invalid spec". Cuts are ordinary
-spec fields, so a bad one is a review-UI edit rather than a re-run. If taste turns out to
-be the problem, the levers in order are: exemplars (§10), then a stage gate on `plan_edit`
-specifically, then narrowing its remit to silence-trimming and leaving substantive cuts
-manual.
+*Mitigation:* decision #19 gives this a real floor. `trim` is deterministic, so the
+fallback is a silence-trimmed, filler-stripped video rather than an unedited take — the
+model is adding polish on top of something already watchable, not carrying the feature
+alone. Beyond that: `plan_edit` lands early (phase 5) so a bad answer is cheap to react
+to; §9.1's integrity and totality checks bound the damage to "wrong taste" rather than
+"invalid spec"; tiers are ordinary spec fields, so a bad one is a review-UI edit rather
+than a re-run. If taste is still the problem, the levers in order are exemplars (§10),
+then a stage gate on `plan_edit`, then dropping it to `trim` alone with tiering manual.
 
 **R5 — No constrained decoding.** Decision #13 trades a schema guarantee for a schema
 instruction (§7.2). The plausible failure is not a wild response but a subtly wrong one —
@@ -613,13 +754,14 @@ nothing downstream could tell.
 ## 15. Open questions
 
 - Review UI across profiles: one job with a shared `EditSpec` and per-profile caption
-  geometry, or two independent approvals? Current lean is one job, since most corrections
-  apply to the shared spec.
+  geometry, or two independent approvals? Decision #21 strengthens the case for one job —
+  the profile-specific part of the edit is now a single scalar budget rather than a
+  divergent cut list — but a correction that is right for the short and wrong for the demo
+  still has nowhere obvious to live.
 - Whether `still_4x5` is worth a distinct profile or whether stills reuse `shorts_9x16`.
-- Whether `plan_edit`'s two halves — cuts and cleanup — are one stage or two. One stage
-  sees the whole picture and decides once; two cache and degrade independently, so a bad
-  cut decision does not cost you a clean transcript. Current lean is one stage emitting
-  one `EditDecisions` fragment, revisited if phase 5 shows the two failing separately.
+- Whether three tiers are enough resolution, or whether `shorts_9x16` needs a finer ranking
+  than `essential` to hit a tight budget. Adding a tier is a `spec_version` migration, which
+  is exactly the churn §4.2 exists to absorb — so start at three and find out.
 - Music beds still need a source. Templates generate visual overlays; audio has no
   equivalent, and under §1.1 the obvious shortcut — generating one — is closed. A licensed
   track is a source like any other, so this is a procurement question rather than a design

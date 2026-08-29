@@ -68,12 +68,17 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 
 **Build**
 
-- Pydantic models: `EditSpec`, `RenderProfile`, `FocusTrack`, `EditDecisions` (`cuts` and
-  `transcript_edits` — `architecture.md` §4.4), `CaptionBlock` (carrying per-word timings
-  from the start — §6.2), `OverlayIntent`, `AudioTrack`.
-- `EditDecisions` validators that make an impossible cut unrepresentable: segments inside
-  source bounds, non-overlapping, non-inverted. Cheap here, and it is half of risk R5's
-  mitigation.
+- Pydantic models: `EditSpec`, `RenderProfile` (with `duration_budget`), `FocusTrack`,
+  `EditDecisions` (`removals` and tiered `segments` — `architecture.md` §4.4),
+  `CaptionBlock` (carrying per-word timings from the start — §6.2), `OverlayIntent`,
+  `AudioTrack`.
+- `EditDecisions` validators that make an impossible edit unrepresentable: inside source
+  bounds, non-inverted, non-overlapping, and **totality** — removals and segments partition
+  the source with no gaps. Cheap here, and it is half of risk R5's mitigation.
+- **Field-origin metadata** on every spec field: which stage produces it, and whether that
+  stage is deterministic or model-backed (§11.1). No model stage exists until phase 5, but
+  retrofitting this once the golden set matters means backfilling it across a schema that
+  has already drifted.
 - `spec_version` and a migration registry, with one no-op migration to prove the mechanism.
 - JSON Schema emit + TypeScript type generation, wired to a `make` target.
 - Two profiles: `shorts_9x16`, `demo_16x9`.
@@ -103,6 +108,11 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
   tunables from `architecture.md` §4.3 read from `constraints.yaml`.
 - FFmpeg compiler: `EditSpec` + `RenderProfile` → filter graph. Zoom/crop, plain ASS
   caption blocks, overlay PNG compositing, audio mix with ducking, loudness normalization.
+- **The time projection** (`architecture.md` §4.5): apply `removals`, select segments by
+  the profile's `duration_budget`, concatenate, remap every timing from source into edited
+  time, split caption blocks at boundaries using their per-word timings, drop overlays
+  landing inside removed ranges. Driven by **hand-authored** `EditDecisions` on the
+  fixtures — no model, no `trim`, just the mechanism.
 - SVG overlay templates (callout arrow, highlight box, label chip, progress pill) rendered
   to PNG at target resolution.
 - VideoToolbox encode path plus a software-encode path for reproducible golden renders.
@@ -112,9 +122,19 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 - One fixture renders to both profiles and both are watchable.
 - Zoom lands on the click clusters; the 9:16 crop follows the focus point without judder.
 - Captions burn in, correctly timed, inside the safe area for each profile.
+- A fixture with hand-authored removals renders cut, with captions trimmed at the
+  boundaries and no clipped words. The same fixture under two `duration_budget` values
+  produces two different lengths from one `EditSpec`.
 - Software-encoded renders are byte-identical across two runs.
 
 **Not in this phase:** kinetic captions, the cache, any model, real media.
+
+**Why the projection is here and not in phase 5.** Cutting is a compiler capability, not a
+model capability — the model only decides *what*, and §4.5 makes the compiler responsible
+for *how*. Building it here means phase 5 adds a stage against a mechanism that already
+demonstrably works, instead of debugging timeline remapping and model output at the same
+time. It also means a hand-authored `EditDecisions` is a complete, renderable edit from
+phase 2 onward, which is the manual escape hatch for any job the model gets wrong.
 
 ---
 
@@ -184,32 +204,41 @@ fumbled restart and the "um" come out.
 
 **Build**
 
+- **`trim`** (deterministic, no model): silence and dead air from audio levels, filler
+  words from a closed list against the transcript, with the §4.6 tunables in
+  `constraints.yaml`. Emits proposed `removals`. **Build and evaluate this alone first** —
+  it is most of the value, and knowing how much it gets right is what tells you what the
+  model actually needs to do.
 - Agent-CLI adapter in `runner/`: the §7.3 invocation (print mode, JSON events, tools
   disabled, fixed cwd), schema into the prompt, fragment validated back out, retry once on
   a validation error, degrade per §7.4. One adapter, reused by every later model stage —
-  this is the phase that pays for phases 9 and later.
-- `plan_edit` — **cuts**: transcript plus word timings plus a `FocusTrack` summary in,
-  `EditDecisions.cuts` out. Dead air, restarts, and dwell on nothing.
-- `plan_edit` — **transcript cleanup**: disfluencies as timing ranges, never as rewritten
-  text (§4.4).
-- Compiler support for a cut timeline: segments concatenated, `FocusTrack` and caption
-  timings remapped into edited time.
-- Cut integrity checks from §9.1 — the arithmetic ones, ahead of the rest of verification,
+  this is the phase that pays for phase 9.
+- **`plan_edit`** (model): transcript, word timings, `trim`'s proposal and a `FocusTrack`
+  summary in; final `removals` plus tiered `segments` out. It may reject any proposed
+  removal, add false starts and restarts of its own, and rank what remains.
+- §9.1's edit-integrity, totality and budget checks, ahead of the rest of verification,
   because they bound what a bad fragment can do.
 
 **Exit criteria**
 
-- A real take comes out shorter than it went in, and the cuts are ones you would have made.
-- Removing a disfluency removes it from *both* the audio and the caption, at the same
-  instants, with no clipped adjacent word.
-- Killing the network mid-job still produces a render — the uncut, verbatim one from §7.4.
+- `trim` alone produces a watchable video from a real take: no dead air, no fillers, no
+  clipped words at the boundaries. This is the §7.4 floor, and it has to be genuinely
+  acceptable on its own.
+- `plan_edit` on top of it produces cuts you would have made, and its overrides of `trim`
+  are defensible — check the override rate on the report (§9.1).
+- One `EditSpec` renders at two different lengths under two `duration_budget` values, and
+  both are coherent — the short is not just the demo with its ending missing.
+- Killing the network mid-job still produces a render: the `trim`-only one, all segments
+  `essential`.
 - Re-running with an unchanged transcript hits the cache and calls no model. If it does not,
   phase 3's key is wrong (§5.2), and everything after this gets slow and expensive.
 
-**This is a stop-and-reassess gate.** If the cuts are not good, risk R4 has landed: work
-the levers in R4's order — exemplars, then a stage gate, then narrowing `plan_edit` to
-silence-trimming with substantive cuts left manual. Do not carry a bad `plan_edit` forward
-on the assumption that later phases improve it. They do not; they decorate it.
+**This is a stop-and-reassess gate,** and decision #19 gives it a much better shape than a
+single pass/fail: `trim` and `plan_edit` can be judged separately. If `trim` is good and
+`plan_edit` adds nothing, ship `trim` and leave tiering manual — that is a real product.
+If `trim` itself is wrong, that is tunables in `constraints.yaml`, not an architecture
+problem. Work R4's levers in order and do not carry a bad `plan_edit` forward on the
+assumption that later phases improve it. They do not; they decorate it.
 
 **Not in this phase:** emphasis, overlays, metadata — those are phase 9, and they are
 decoration on top of this.
@@ -224,12 +253,13 @@ decoration on top of this.
 
 - Deterministic checks (`architecture.md` §9.1): render integrity, duration, loudness and
   true peak, caption overlap / duration / line length / safe area, overlay occlusion,
-  crop-path continuity. Cut integrity already exists from phase 5; fold it into the same
-  report.
+  crop-path continuity. Edit integrity, totality and budget already exist from phase 5;
+  fold them into the same report.
 - Transcript round-trip: open-transcribe the rendered audio, diff against the
-  **post-`plan_edit` expected transcript**, classify each difference per §9.2's three
-  classes, report WER over the third class only. Diffing against the raw transcript would
-  flag every successful phase-5 edit as a failure.
+  **expected transcript** computed per profile from the spec (source minus removals, minus
+  segments below this profile's threshold — §9.2), classify each difference into the three
+  classes, report WER over the third only. Diffing against the raw transcript would flag
+  every successful phase-5 edit as a failure.
 - A verification report per render, stored on the job record.
 - At least one **deliberately broken** fixture — clipped audio, overlapping captions,
   juddering crop, and a cut landing mid-word — added to `golden/`.
@@ -255,10 +285,11 @@ the deterministic checks miss.
 
 - FastAPI app, one page per job: rendered video per profile, verification report, the
   proposed `EditSpec` as an editable form, re-render button.
-- Cut review specifically: the `EditDecisions` segments with their `reason` (§4.4), so a
-  cut can be reinstated or extended without leaving the form. Corrections to cuts are the
-  ones most worth capturing — they are the phase-5 feedback signal and the input to §10's
-  cut-pacing defaults.
+- Edit review specifically: `removals` grouped by `kind` and `segments` with their tier and
+  `reason` (§4.4), so a removal can be reinstated or a segment re-tiered without leaving
+  the form — plus the profile's `duration_budget` as a directly editable number, since
+  "make the short shorter" is one field rather than a dozen re-tierings. These corrections
+  are the phase-5 feedback signal and the input to §10's budget defaults.
 - Any §7.4 degradation shown prominently. Under decision #12 this page is the only place a
   degraded job announces itself.
 - Accept / reject, writing accepted specs and the proposed→corrected diff to SQLite.
@@ -268,8 +299,10 @@ the deterministic checks miss.
 
 - A correction round trip — edit, re-render, accept — completes in seconds, not minutes,
   because the cache holds.
-- Adjusting a cut re-runs compile and render and **does not re-run `plan_edit`**. If it
-  does, the review loop costs a model call per correction and will be abandoned.
+- Adjusting a removal, a tier, or a budget re-runs compile and render and **re-runs no
+  planner at all** — not `plan_edit`, not `plan_captions`, not `plan_overlays`. This is
+  §4.5's whole payoff, and if it does not hold, the review loop costs a model call per
+  correction and will be abandoned.
 - `accepted_specs` and the diff record populate correctly.
 
 **Not in this phase:** overlay preview, live playback.
@@ -323,7 +356,10 @@ is four stages against a seam that already works, which is the whole reason it i
   deserve, and model choice is a flag (decision #13). Overlay placement is not script
   drafting.
 - Degradation paths per §7.4's table, extended to cover the four new stages.
-- Golden-set replay across the model stages, parallelized per §7.5.
+- Golden-set replay split by field origin (§11.1): strict single-run tolerances on
+  deterministic fields, distributional over N runs on model-written ones. Parallelized per
+  §7.5. The origin metadata came from phase 1, so this is a harness rather than a
+  schema change.
 
 **Exit criteria**
 
@@ -345,10 +381,11 @@ phase is not ready — go and make videos instead.
 **Build**
 
 - Numeric defaults: windowed median per tunable per profile, with a minimum sample count —
-  including cut pacing, which phase 5 made a real quantity (`architecture.md` §10).
+  the §4.3 focus tunables, the §4.6 trim tunables, and each profile's `duration_budget`,
+  which is what "cut pacing" concretely means (`architecture.md` §10).
 - Exemplar retrieval feeding the phase-5 and phase-9 stages. `plan_edit` benefits most:
-  accepted cut decisions are the closest thing this system has to a record of your taste,
-  and they are the first lever in risk R4.
+  accepted tier assignments are the closest thing this system has to a record of your
+  taste, and they are the first lever in risk R4.
 - Learner emits a **proposed** diff to `defaults.json` for approval; never auto-applies.
 - Every accepted change written to `pref_changes` with its causing jobs.
 - Golden-set replay gating: a preference change that moves golden specs beyond tolerance
@@ -358,6 +395,9 @@ phase is not ready — go and make videos instead.
 
 - Correcting zoom factor the same way across several jobs produces a proposal to move the
   default, and the changelog explains which jobs caused it.
+- Shortening `shorts_9x16` by hand across several jobs proposes a lower `duration_budget`
+  for that profile and leaves `demo_16x9` untouched. Per-profile learning is the reason
+  §4.1 has two layers, and the budget is where it pays off most visibly.
 - A job that failed verification contributes nothing.
 - Reverting a preference change restores prior planning behaviour exactly.
 
