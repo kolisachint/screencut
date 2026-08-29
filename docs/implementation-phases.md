@@ -3,8 +3,10 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Nothing here is built yet. Phases are sized to be picked up cold: each states its goal,
-what gets built, how you know it is finished, and what is deliberately excluded.
+Phases 1 to 3 are built, and phase 6's deterministic layer with them; phase 0 is a spike on
+the target machine and has not been run. Phases
+are sized to be picked up cold: each states its goal, what gets built, how you know it is
+finished, and what is deliberately excluded.
 
 ## Ordering principles
 
@@ -29,18 +31,33 @@ what gets built, how you know it is finished, and what is deliberately excluded.
 
 **Goal:** replace assumptions with facts before any of them is load-bearing.
 
-Not a coding phase. Half a day of finding out whether the stack works on this machine.
+Not a coding phase. Half a day of finding out whether the stack works on this machine —
+a base-model M1 MacBook Air, 8GB, fanless (`architecture.md` §16). Two things follow for
+how the measuring is done: **record peak memory alongside every timing**, because on 8GB
+the number that decides a design is resident size rather than seconds; and **say whether a
+timing is burst or sustained**, because a fanless machine gives two different answers and
+only the sustained one governs a real job.
 
 **Build**
 
 - Record a real take with Cap (and/or Screenize) and try to extract cursor + click events.
   Document the actual format, sample rate, and coordinate space.
 - Run each candidate ASR backend on a sample: `mlx-whisper`, `whisper.cpp`, and
-  faster-whisper. Time them. Confirm the CTranslate2/MPS situation firsthand.
+  faster-whisper. Time them and record peak RSS. Confirm the CTranslate2/MPS situation
+  firsthand. Do it at more than one model size — `large-v3` against `medium` — since on
+  8GB the smaller model winning on wall-clock is a live possibility rather than a
+  consolation prize.
 - Run WhisperX's wav2vec2 alignment model under MPS. Confirm it works and time it.
 - Install F5-TTS and synthesize thirty seconds. Note whether MPS works, whether
-  `PYTORCH_ENABLE_MPS_FALLBACK=1` is needed, and how long it takes.
-- Confirm `h264_videotoolbox` is available in the installed FFmpeg.
+  `PYTORCH_ENABLE_MPS_FALLBACK=1` is needed, how long it takes, and peak memory. A CPU
+  fallback on 8GB is also a second copy of the tensors, so the memory number is as much
+  the verdict as the timing is.
+- Transcribe and synthesize back to back in one process and watch for swap. This is the
+  cheapest possible test of the §16 claim that stages must be serialized, and it is worth
+  knowing before `LocalRunner` is written rather than after.
+- Confirm `h264_videotoolbox` is available in the installed FFmpeg, and time a one-minute
+  1080p encode both ways — hardware and `libx264` — since the software path is what the
+  golden set pays for on every replay.
 - Install hoocode and confirm the stage invocation from `architecture.md` §7.3 works:
   `-p --mode json`, tools disabled, a JSON Schema in the prompt, and a schema-valid
   fragment parsed back out of stdout. Do it once by hand with a throwaway schema. Note
@@ -57,12 +74,16 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 - **Does the agent CLI round-trip a schema reliably?** This is risk R5. A "mostly" is the
   expected answer and is fine — §7.2's validate-retry-degrade handles it. A "no" means
   reopening decision #13 before phase 5 depends on it.
+- **What is the memory budget per stage?** The 8GB ceiling decides the ASR model size that
+  goes into `constraints.yaml` and confirms whether local stages have to be serialized. A
+  measured peak-RSS figure per stage is the deliverable; "it seemed fine" is not, because
+  the failure mode is swap rather than a crash and swap looks like slowness.
 
 **Not in this phase:** any pipeline code.
 
 ---
 
-## Phase 1 — Spec and fixtures
+## Phase 1 — Spec and fixtures — **built**
 
 **Goal:** the data model everything else is written against.
 
@@ -96,7 +117,7 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 
 ---
 
-## Phase 2 — Compiler and render ★
+## Phase 2 — Compiler and render ★ — **built**
 
 **★ The load-bearing milestone.** Everything downstream assumes this works.
 
@@ -129,6 +150,21 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 
 **Not in this phase:** kinetic captions, the cache, any model, real media.
 
+**How it came out.** Two mechanisms rather than one, because the two projections
+want different things. A crop path is a *sampled* path, so it is computed per frame
+in Python and delivered through `sendcmd` to a `crop` filter whose window never
+changes size. A zoom is a handful of eased regions, which is analytic, so it stays
+an FFmpeg expression — and it has to, because `zoompan` accepts no commands and is
+the only filter that can hold a window whose size varies. The same `sendcmd` stream
+carries overlay positions (an overlay follows the point it labels, so it moves when
+the crop moves) and the progress pill's fill, which is computed from output duration
+exactly as §4.5 says it should be.
+
+The trapezoid that shapes a zoom now exists twice — once as an expression, once in
+Python for the overlay projection. `tests/test_compile_graph.py` evaluates the
+generated expression against the Python one at quarter-second steps, because two
+implementations of one formula is the pair that drifts silently.
+
 **Why the projection is here and not in phase 5.** Cutting is a compiler capability, not a
 model capability — the model only decides *what*, and §4.5 makes the compiler responsible
 for *how*. Building it here means phase 5 adds a stage against a mechanism that already
@@ -138,7 +174,7 @@ phase 2 onward, which is the manual escape hatch for any job the model gets wron
 
 ---
 
-## Phase 3 — Runner, cache, and persistence
+## Phase 3 — Runner, cache, and persistence — **built**
 
 **Goal:** make re-running cheap, which is what makes the review loop possible at all.
 
@@ -146,7 +182,10 @@ phase 2 onward, which is the manual escape hatch for any job the model gets wron
 
 - Stage contract: `(inputs, params) -> artifact` as a CLI taking JSON on stdin.
 - `LocalRunner` (subprocess). Define the `Runner` interface such that `RemoteRunner` is a
-  drop-in; do not build it.
+  drop-in; do not build it. Local-inference stages run **one at a time** — 8GB will not
+  hold two models, and a runner that discovers this by swapping is a runner that looks
+  merely slow (`architecture.md` §16). Stages that hold no local weights, the agent-CLI
+  ones included, are exempt.
 - Content-addressed cache keyed on `(stage_name, input_hash, params_hash)`, with
   `stage_version` in the key — and, for model stages, the model identifier and prompt
   version folded into `params_hash` (`architecture.md` §5.2). No model stage exists yet;
@@ -162,6 +201,23 @@ phase 2 onward, which is the manual escape hatch for any job the model gets wron
 - Bumping a `stage_version` invalidates that stage and its dependents, and nothing else.
 
 **Not in this phase:** `RemoteRunner`, distributed anything.
+
+**How it came out.** The load-bearing decision is that **a stage fingerprints what
+it reads**, not the whole spec. `plan_focus` hashes the source dimensions, the
+focus track and the profile's geometry; `compile` hashes the edit and the profile
+*minus* the encoder; `render` hashes the media contents and the encoder alone. So a
+caption edit re-runs compile and render, and changing `crf` re-encodes without
+recompiling. Hashing the spec wholesale would have been simpler and would have
+made §8's argument false.
+
+Invalidation propagates because a stage's inputs include its upstream stages'
+cache keys — which is also why bumping one `stage_version` touches that stage and
+its dependents and nothing beside them.
+
+Renders are cached under their key like every other artifact and **hard-linked**
+into `renders/` under a stable name. The cache stays immutable and content-
+addressed, `renders/` is a view onto it, and 256GB (§16) does not stretch to two
+copies of everything.
 
 ---
 
@@ -245,9 +301,16 @@ decoration on top of this.
 
 ---
 
-## Phase 6 — Verification
+## Phase 6 — Verification — **deterministic layer built**
 
 **Goal:** stop garbage reaching a person.
+
+**Built out of order, and deliberately.** §9.1's checks need a spec, a profile and
+a render, and nothing else — not real media, not a model. They were pulled forward
+because they are what will catch problems on the *first* real recording, which is
+when nobody yet knows what to look for. §9.2's transcript round-trip and §9.3's
+perceptual layer stay where they are: both need something phase 0 has not chosen
+yet.
 
 **Build**
 
@@ -274,6 +337,26 @@ decoration on top of this.
 
 **Not in this phase:** the VLM perceptual layer. Add it once you know which real failures
 the deterministic checks miss.
+
+**How it came out.** `verify` is a pipeline stage like any other, so a report is
+cached, keyed and invalidated with everything else, and `screencut run` prints it.
+The report is a list of findings rather than a verdict, because §9.1's most useful
+outputs are numbers — the budget overrun in seconds, the trim composition — and a
+check that can only say no cannot say "7.4 seconds over".
+
+Two of §11's four breakages turned out to be **unrepresentable**: `EditSpec`
+refuses overlapping caption blocks and `plan_focus` rate-limits the crop by
+construction. Their checks stay, exercised against hand-built inputs, because the
+thing that makes them impossible today is code that can change. The broken fixture
+carries the two a spec can still express, plus an overlay that occludes a caption.
+
+The checks paid for themselves before they were finished. Running them on the good
+fixture failed twice for real reasons: overlays placed a pixel outside the safe
+area because a normalized inset was rounded to pixels in two places that disagreed,
+and the fixture's own highlight box sat on top of the caption. The first is fixed by
+one shared rounding helper; the second by moving the fixture's target, because a
+good fixture has to actually be good or the check fires every run and gets ignored
+within a week.
 
 ---
 
@@ -324,7 +407,9 @@ recorded input, not a default that can be quietly pointed at someone else.
 **Build**
 
 - `tts` stage: F5-TTS behind the CLI contract. If phase 0 said local is impractical, this
-  is where `RemoteRunner` gets built instead.
+  is where `RemoteRunner` gets built instead — and on a base-model M1 Air that is a real
+  branch rather than a formality, so read phase 0's memory and sustained-speed numbers
+  before starting rather than after.
 - `align` stage: WhisperX **forced alignment** against the known script text — a different
   mode from phase 4's open transcription (`architecture.md` §5.3).
 - Script as an optional job input; music bed mixing and ducking against synthesized narration.

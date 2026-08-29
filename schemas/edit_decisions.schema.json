@@ -1,0 +1,156 @@
+{
+  "$defs": {
+    "Removal": {
+      "additionalProperties": false,
+      "description": "A range that never survives, in any profile.\n\nExpressed as a range rather than as rewritten text, and that is what keeps\nthis an edit: audio and caption are cut at the same instants, from the same\ndecision, and nothing is put into your mouth that you did not say.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RemovalKind",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "proposed_by": {
+          "default": "plan_edit",
+          "description": "Which stage first proposed this range. `trim` for an arithmetic proposal the model kept, `plan_edit` for one the model added. Feeds the trim override rate on the verification report (\u00a79.1).",
+          "enum": [
+            "trim",
+            "plan_edit"
+          ],
+          "title": "Proposed By",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out",
+        "kind"
+      ],
+      "title": "Removal",
+      "type": "object"
+    },
+    "RemovalKind": {
+      "description": "Why a range does not survive. Silence and filler are `trim`'s to find\n(\u00a74.6, arithmetic); false starts and redundancy are `plan_edit`'s (language).",
+      "enum": [
+        "silence",
+        "filler",
+        "false_start",
+        "redundant"
+      ],
+      "title": "RemovalKind",
+      "type": "string"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "Surviving content, ranked. `reason` is what makes a tier reviewable.",
+      "properties": {
+        "reason": {
+          "description": "Why this segment got this tier. Shown in review (\u00a78); a tier with no reason cannot be argued with.",
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out",
+        "tier",
+        "reason"
+      ],
+      "title": "Segment",
+      "type": "object"
+    },
+    "Tier": {
+      "description": "How good a segment is \u2014 aspect-independent taste, decided once (\u00a74.4.1).\n\nWhich tiers survive is a *separate*, per-profile, arithmetic decision driven\nby `duration_budget`. Tiers are a ranking, not a cut.",
+      "enum": [
+        "essential",
+        "supporting",
+        "optional"
+      ],
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "$id": "https://screencut.local/schemas/edit_decisions.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`removals` + `segments`, partitioning the source exactly.\n\nValidated here: in ascending order, non-inverted, non-overlapping, contiguous,\nand starting at 0.0. The one thing that cannot be checked here is where the\npartition *ends* \u2014 that needs the source duration, so `EditSpec` checks it\n(\u00a74.4's totality is a two-model invariant only because duration lives on the\nsource).",
+  "properties": {
+    "removals": {
+      "items": {
+        "$ref": "#/$defs/Removal"
+      },
+      "title": "Removals",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "model",
+        "stage": "plan_edit"
+      }
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/Segment"
+      },
+      "title": "Segments",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "model",
+        "stage": "plan_edit"
+      }
+    }
+  },
+  "title": "EditDecisions",
+  "type": "object"
+}

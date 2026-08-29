@@ -1,0 +1,439 @@
+{
+  "$defs": {
+    "CaptionStyle": {
+      "additionalProperties": false,
+      "description": "Caption box geometry and type scale, in output-normalized coordinates.\n\nLearned per profile (\u00a74.1) \u2014 this is the example that argues for two layers.",
+      "properties": {
+        "box": {
+          "$ref": "#/$defs/Rect",
+          "description": "Where the caption block sits in the output frame.",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "font_family": {
+          "default": "Inter",
+          "title": "Font Family",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "max_chars_per_line": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Max Chars Per Line",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "max_lines": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Max Lines",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "min_display_s": {
+          "default": 0.8,
+          "exclusiveMinimum": 0.0,
+          "title": "Min Display S",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "type_scale": {
+          "default": 0.045,
+          "description": "Cap height as a fraction of output height.",
+          "exclusiveMinimum": 0.0,
+          "maximum": 0.5,
+          "title": "Type Scale",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        }
+      },
+      "required": [
+        "box"
+      ],
+      "title": "CaptionStyle",
+      "type": "object"
+    },
+    "EncodeSettings": {
+      "additionalProperties": false,
+      "description": "Encode settings for both paths, because both are used.\n\nQuality is expressed twice on purpose. `crf` and `preset` are x264's scales and\ngovern the software path; `quality` is VideoToolbox's and governs the hardware\none. They are not convertible, so a single knob would have to lie about one\nencoder \u2014 and on the target machine (\u00a716) the hardware encoder is the default,\nwhich is the path a lone `crf` would silently fail to control. `compile` reads\nwhichever pair matches `encoder`.",
+      "properties": {
+        "audio_bitrate_kbps": {
+          "default": 192,
+          "exclusiveMinimum": 0,
+          "title": "Audio Bitrate Kbps",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "audio_codec": {
+          "default": "aac",
+          "title": "Audio Codec",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "crf": {
+          "default": 20,
+          "description": "Software path only (x264): lower is better.",
+          "maximum": 51,
+          "minimum": 0,
+          "title": "Crf",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "encoder": {
+          "$ref": "#/$defs/Encoder",
+          "default": "videotoolbox",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "pix_fmt": {
+          "default": "yuv420p",
+          "title": "Pix Fmt",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "preset": {
+          "default": "medium",
+          "description": "Software path only (x264).",
+          "title": "Preset",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "quality": {
+          "default": 60,
+          "description": "Hardware path only (VideoToolbox `-q:v`): higher is better. Phase 2 confirms the range against the installed FFmpeg before relying on it.",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Quality",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "video_codec": {
+          "default": "h264",
+          "title": "Video Codec",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        }
+      },
+      "title": "EncodeSettings",
+      "type": "object"
+    },
+    "Encoder": {
+      "enum": [
+        "videotoolbox",
+        "software"
+      ],
+      "title": "Encoder",
+      "type": "string"
+    },
+    "FocusMode": {
+      "enum": [
+        "zoom_keyframes",
+        "crop_path"
+      ],
+      "title": "FocusMode",
+      "type": "string"
+    },
+    "FocusProjection": {
+      "additionalProperties": false,
+      "description": "The \u00a74.3 tunables. Every one is a scalar the preference store learns by median,\nand every one is a number you can also just set by hand when a job needs it.",
+      "properties": {
+        "crop_lag_ms": {
+          "default": 250,
+          "minimum": 0,
+          "title": "Crop Lag Ms",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "ease_ms": {
+          "default": 350,
+          "minimum": 0,
+          "title": "Ease Ms",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "max_crop_delta_per_frame": {
+          "default": 0.012,
+          "description": "Normalized crop movement ceiling. Judder is *the* failure mode of automated reframing (\u00a79.1).",
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "Max Crop Delta Per Frame",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "min_dwell_ms": {
+          "default": 600,
+          "minimum": 0,
+          "title": "Min Dwell Ms",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "min_gap_ms": {
+          "default": 1200,
+          "minimum": 0,
+          "title": "Min Gap Ms",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "mode": {
+          "$ref": "#/$defs/FocusMode",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "zoom_factor": {
+          "default": 1.4,
+          "description": "Magnification at a dwell region in zoom mode. In crop mode it tightens the constant window beyond the aspect fit, and 1.0 is the honest default there \u2014 cropping 9:16 out of 16:9 already costs a 1.8x upscale.",
+          "maximum": 4.0,
+          "minimum": 1.0,
+          "title": "Zoom Factor",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "FocusProjection",
+      "type": "object"
+    },
+    "Rect": {
+      "additionalProperties": false,
+      "description": "A rectangle in normalized coordinates, origin top-left.",
+      "properties": {
+        "h": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "H",
+          "type": "number"
+        },
+        "w": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "W",
+          "type": "number"
+        },
+        "x": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "title": "Rect",
+      "type": "object"
+    },
+    "SafeArea": {
+      "additionalProperties": false,
+      "description": "Insets as fractions of the output. Captions and overlays live inside it (\u00a79.1).",
+      "properties": {
+        "bottom": {
+          "default": 0.12,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Bottom",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "left": {
+          "default": 0.05,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Left",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "right": {
+          "default": 0.05,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Right",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "top": {
+          "default": 0.08,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Top",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        }
+      },
+      "title": "SafeArea",
+      "type": "object"
+    }
+  },
+  "$id": "https://screencut.local/schemas/render_profile.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "captions": {
+      "$ref": "#/$defs/CaptionStyle",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "duration_budget": {
+      "description": "Seconds this profile is willing to run. Decides how aggressively it cuts, and it is one scalar rather than a cut list \u2014 which is what makes cuts aspect-agnostic (\u00a74.4.1) and cut pacing learnable (\u00a710).",
+      "exclusiveMinimum": 0.0,
+      "title": "Duration Budget",
+      "type": "number",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "encode": {
+      "$ref": "#/$defs/EncodeSettings",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "focus": {
+      "$ref": "#/$defs/FocusProjection",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "fps": {
+      "default": 30.0,
+      "exclusiveMinimum": 0.0,
+      "title": "Fps",
+      "type": "number",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "height": {
+      "exclusiveMinimum": 0,
+      "title": "Height",
+      "type": "integer",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "name": {
+      "minLength": 1,
+      "title": "Name",
+      "type": "string",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "safe_area": {
+      "$ref": "#/$defs/SafeArea",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "width": {
+      "exclusiveMinimum": 0,
+      "title": "Width",
+      "type": "integer",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    }
+  },
+  "required": [
+    "name",
+    "width",
+    "height",
+    "duration_budget",
+    "captions",
+    "focus"
+  ],
+  "title": "RenderProfile",
+  "type": "object"
+}

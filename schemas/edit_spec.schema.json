@@ -1,0 +1,789 @@
+{
+  "$defs": {
+    "AudioTrack": {
+      "additionalProperties": false,
+      "description": "Narration and an optional bed, with the loudness targets \u00a79.1 checks against.",
+      "properties": {
+        "duck_db": {
+          "default": -12.0,
+          "description": "How far the bed drops under narration. Negative.",
+          "title": "Duck Db",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "audio"
+          }
+        },
+        "music_gain_db": {
+          "default": -18.0,
+          "title": "Music Gain Db",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "audio"
+          }
+        },
+        "music_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bed, relative to the job directory. A licensed track is a source like any other (\u00a715).",
+          "title": "Music Path",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "narration_gain_db": {
+          "default": 0.0,
+          "title": "Narration Gain Db",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "audio"
+          }
+        },
+        "target_lufs": {
+          "default": -14.0,
+          "title": "Target Lufs",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "true_peak_ceiling_dbtp": {
+          "default": -1.0,
+          "title": "True Peak Ceiling Dbtp",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        }
+      },
+      "title": "AudioTrack",
+      "type": "object"
+    },
+    "CaptionBlock": {
+      "additionalProperties": false,
+      "description": "A displayed block, in source time, with the words that make it up.",
+      "properties": {
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "plan_captions"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "plan_captions"
+          }
+        },
+        "words": {
+          "description": "Words in this block, ascending. Never empty in practice; empty is rejected.",
+          "items": {
+            "$ref": "#/$defs/Word"
+          },
+          "title": "Words",
+          "type": "array",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "plan_captions"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out"
+      ],
+      "title": "CaptionBlock",
+      "type": "object"
+    },
+    "EditDecisions": {
+      "additionalProperties": false,
+      "description": "`removals` + `segments`, partitioning the source exactly.\n\nValidated here: in ascending order, non-inverted, non-overlapping, contiguous,\nand starting at 0.0. The one thing that cannot be checked here is where the\npartition *ends* \u2014 that needs the source duration, so `EditSpec` checks it\n(\u00a74.4's totality is a two-model invariant only because duration lives on the\nsource).",
+      "properties": {
+        "removals": {
+          "items": {
+            "$ref": "#/$defs/Removal"
+          },
+          "title": "Removals",
+          "type": "array",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "title": "Segments",
+          "type": "array",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        }
+      },
+      "title": "EditDecisions",
+      "type": "object"
+    },
+    "FocusKind": {
+      "description": "Why attention is at this point, which decides how much it counts for.",
+      "enum": [
+        "movement",
+        "click",
+        "dwell",
+        "manual"
+      ],
+      "title": "FocusKind",
+      "type": "string"
+    },
+    "FocusPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FocusKind",
+          "default": "movement",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "t": {
+          "description": "Source time in seconds.",
+          "minimum": 0.0,
+          "title": "T",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "weight": {
+          "default": 1.0,
+          "description": "How strongly this point attracts framing. Clicks outweigh movement.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Weight",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "x": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "X",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "y": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Y",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        }
+      },
+      "required": [
+        "t",
+        "x",
+        "y"
+      ],
+      "title": "FocusPoint",
+      "type": "object"
+    },
+    "FocusTrack": {
+      "additionalProperties": false,
+      "properties": {
+        "points": {
+          "description": "Sampled attention, ascending in t. May be empty \u2014 a still with no manual point.",
+          "items": {
+            "$ref": "#/$defs/FocusPoint"
+          },
+          "title": "Points",
+          "type": "array",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        }
+      },
+      "title": "FocusTrack",
+      "type": "object"
+    },
+    "Narration": {
+      "additionalProperties": false,
+      "properties": {
+        "script": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Supplied or AI-drafted (decision #8). Null when narration is whatever you said on the take.",
+          "title": "Script",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "script_draft"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/NarrationSource",
+          "default": "recorded",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "voice_consent_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Recorded on the job so the boundary of decision #20 is auditable, not assumed.",
+          "title": "Voice Consent Note",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        },
+        "voice_reference_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-job reference audio, relative to the job directory. Required to synthesize.",
+          "title": "Voice Reference Path",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        }
+      },
+      "title": "Narration",
+      "type": "object"
+    },
+    "NarrationSource": {
+      "enum": [
+        "recorded",
+        "synthesized"
+      ],
+      "title": "NarrationSource",
+      "type": "string"
+    },
+    "OverlayIntent": {
+      "additionalProperties": false,
+      "description": "One overlay, anchored in source time and normalized source space.\n\n`t_in`/`t_out` are both null for an overlay that spans the whole output \u2014 the\nprogress pill is the case. That is not a second time base (\u00a74.5): an element\nspanning the whole output needs no anchor at all, so compile runs it from zero\nto the end of whatever it produced. Anything positioned at a *moment* is\npositioned relative to content, which is a source-time anchor like any other,\nand compile drops it if the moment lands inside a removal.",
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normalized source position. Null for a whole-output overlay, which has nothing to point at.",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "t_in": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T In",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "t_out": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Out",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "template": {
+          "$ref": "#/$defs/OverlayTemplate",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_overlays"
+          }
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "title": "OverlayIntent",
+      "type": "object"
+    },
+    "OverlayTemplate": {
+      "description": "The closed set. Adding one is a template plus a `spec_version` bump.",
+      "enum": [
+        "callout_arrow",
+        "highlight_box",
+        "label_chip",
+        "progress_pill"
+      ],
+      "title": "OverlayTemplate",
+      "type": "string"
+    },
+    "Point": {
+      "additionalProperties": false,
+      "description": "A position in normalized source coordinates.",
+      "properties": {
+        "x": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point",
+      "type": "object"
+    },
+    "Removal": {
+      "additionalProperties": false,
+      "description": "A range that never survives, in any profile.\n\nExpressed as a range rather than as rewritten text, and that is what keeps\nthis an edit: audio and caption are cut at the same instants, from the same\ndecision, and nothing is put into your mouth that you did not say.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RemovalKind",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "proposed_by": {
+          "default": "plan_edit",
+          "description": "Which stage first proposed this range. `trim` for an arithmetic proposal the model kept, `plan_edit` for one the model added. Feeds the trim override rate on the verification report (\u00a79.1).",
+          "enum": [
+            "trim",
+            "plan_edit"
+          ],
+          "title": "Proposed By",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out",
+        "kind"
+      ],
+      "title": "Removal",
+      "type": "object"
+    },
+    "RemovalKind": {
+      "description": "Why a range does not survive. Silence and filler are `trim`'s to find\n(\u00a74.6, arithmetic); false starts and redundancy are `plan_edit`'s (language).",
+      "enum": [
+        "silence",
+        "filler",
+        "false_start",
+        "redundant"
+      ],
+      "title": "RemovalKind",
+      "type": "string"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "Surviving content, ranked. `reason` is what makes a tier reviewable.",
+      "properties": {
+        "reason": {
+          "description": "Why this segment got this tier. Shown in review (\u00a78); a tier with no reason cannot be argued with.",
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "plan_edit"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out",
+        "tier",
+        "reason"
+      ],
+      "title": "Segment",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "description": "A single raw take, plus the facts about it the compiler needs.\n\nOne source per job, singular and deliberate. Multi-take assembly is a schema\nfield *and* a compiler change (decision #24); \u00a74.2's migration registry is\nwhat makes adding it later ordinary rather than alarming.\n\n`path` is relative to the job directory, never absolute: a job directory has\nto survive being moved or archived into `golden/`.",
+      "properties": {
+        "duration": {
+          "description": "Source duration in seconds.",
+          "exclusiveMinimum": 0.0,
+          "title": "Duration",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "events_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Recorder event sidecar, relative to the job directory. None when the recorder produced none.",
+          "title": "Events Path",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "fps": {
+          "exclusiveMinimum": 0.0,
+          "title": "Fps",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "has_audio": {
+          "default": true,
+          "title": "Has Audio",
+          "type": "boolean",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "path": {
+          "description": "Media path, relative to the job directory.",
+          "title": "Path",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "source_id": {
+          "description": "Stable id of the take within the job.",
+          "title": "Source Id",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        }
+      },
+      "required": [
+        "source_id",
+        "path",
+        "duration",
+        "width",
+        "height",
+        "fps"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "Tier": {
+      "description": "How good a segment is \u2014 aspect-independent taste, decided once (\u00a74.4.1).\n\nWhich tiers survive is a *separate*, per-profile, arithmetic decision driven\nby `duration_budget`. Tiers are a ranking, not a cut.",
+      "enum": [
+        "essential",
+        "supporting",
+        "optional"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "Word": {
+      "additionalProperties": false,
+      "description": "One spoken word with its alignment window.\n\n`emphasis` is the only model-written field in the caption subtree (\u00a77.1:\nemphasis selection is taste, timing and layout are not) \u2014 which is exactly\nthe mixed-origin case \u00a711.1's per-field metadata exists for.",
+      "properties": {
+        "emphasis": {
+          "default": false,
+          "title": "Emphasis",
+          "type": "boolean",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "emphasis"
+          }
+        },
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "align"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "align"
+          }
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "align"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out",
+        "text"
+      ],
+      "title": "Word",
+      "type": "object"
+    }
+  },
+  "$id": "https://screencut.local/schemas/edit_spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "audio": {
+      "$ref": "#/$defs/AudioTrack",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "audio"
+      }
+    },
+    "captions": {
+      "items": {
+        "$ref": "#/$defs/CaptionBlock"
+      },
+      "title": "Captions",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "plan_captions"
+      }
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    },
+    "edit": {
+      "$ref": "#/$defs/EditDecisions",
+      "x-screencut-origin": {
+        "origin": "model",
+        "stage": "plan_edit"
+      }
+    },
+    "focus": {
+      "$ref": "#/$defs/FocusTrack",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "ingest"
+      }
+    },
+    "job_id": {
+      "minLength": 1,
+      "title": "Job Id",
+      "type": "string",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    },
+    "narration": {
+      "$ref": "#/$defs/Narration",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "config"
+      }
+    },
+    "overlays": {
+      "items": {
+        "$ref": "#/$defs/OverlayIntent"
+      },
+      "title": "Overlays",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "model",
+        "stage": "plan_overlays"
+      }
+    },
+    "source": {
+      "$ref": "#/$defs/Source",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "ingest"
+      }
+    },
+    "spec_version": {
+      "default": 2,
+      "description": "Carried from the first commit (\u00a74.2). Load through `spec.migrations.load_spec`, never bare.",
+      "title": "Spec Version",
+      "type": "integer",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    }
+  },
+  "required": [
+    "job_id",
+    "source"
+  ],
+  "title": "EditSpec",
+  "type": "object"
+}

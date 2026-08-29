@@ -1,0 +1,30 @@
+# Hard constraints (architecture.md §10, tier 1).
+#
+# Hand-written, and never auto-modified. The preference learner (§10, phase 10)
+# writes prefs/defaults.json and may not touch this file — that separation is the
+# point of having two files rather than one.
+#
+# `profiles:` is sparse on purpose. Only the keys present here override the
+# built-in profiles in spec/profiles.py, so this file never becomes a second copy
+# of the defaults that drifts from the first. It is how a tunable gets retuned on
+# a real take without a code change (§4.3), which phase 4 expects to need.
+
+captions:
+  # libass resolves this through fontconfig and substitutes if it is missing.
+  font_family: Inter
+
+voice:
+  # Decision #20. Synthesis is permitted only of you, from a per-job reference
+  # you explicitly recorded; the schema enforces the second half (spec/narration.py).
+  allow_synthesis: true
+
+encode:
+  # §11 hashes frames, and hardware encoders are not bit-reproducible across
+  # machines or OS versions (§16). Golden renders take the software path.
+  golden_encoder: software
+
+profiles: {}
+  # shorts_9x16:
+  #   focus:
+  #     crop_lag_ms: 320
+  #   duration_budget: 20.0

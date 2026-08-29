@@ -1,0 +1,11 @@
+{
+  "name": "screencut-types",
+  "private": true,
+  "description": "Typecheck harness for the TypeScript types generated from the Pydantic spec.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
