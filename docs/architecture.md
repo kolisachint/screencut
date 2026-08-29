@@ -27,7 +27,7 @@ Recorded so future-us knows what was chosen deliberately versus what merely happ
 | 1 | Users | Single user, one style | No tenancy/auth/quota layers. Preferences are one directory. |
 | 2 | Compute location | Undecided | Every heavy stage is a CLI contract behind a `Runner`. Only `LocalRunner` gets built. |
 | 3 | Renderer | FFmpeg primary, MLT export | One renderer, no parity guarantee to maintain. See §6. |
-| 4 | Correction capture | Web review UI editing the spec | Corrections are structural diffs, which is what makes §9 possible. |
+| 4 | Correction capture | Web review UI editing the spec | Corrections are structural diffs, which is what makes §10 possible. |
 | 5 | Cursor events | Available from recorder | Auto-zoom and reframing are arithmetic, not inference. See §4.3. |
 | 6 | Outputs | 9:16, 16:9, both from one source, stills | Forces the two-layer spec in §4.1. |
 | 7 | Language | Python core, Pydantic → JSON Schema → TS | One spec definition serves validation, the UI types, *and* LLM output constraint. |
@@ -37,6 +37,10 @@ Recorded so future-us knows what was chosen deliberately versus what merely happ
 | 11 | Overlays | Generated from templates per video | SVG re-renders correctly across aspect ratios; a bitmap library would not. See risk R2. |
 | 12 | Autonomy | Full auto, review the finished render | Fastest feedback per job; cleanest diffs. Costs compute on bad scripts. |
 | 13 | LLM stages | Anthropic API, `claude-opus-5` | See §7. |
+| 14 | Captions | Plain blocks first, kinetic later | Spec carries word timings from day one; only the compiler changes later. See §6.2. |
+| 15 | Review UX | Form + re-render; overlay preview later | Puts the whole weight on the stage cache. See §8. |
+| 16 | State | SQLite + files on disk | Media in per-job directories, records and cache index in SQLite. See §5.4. |
+| 17 | Hardware | Apple Silicon | ASR backend must be swappable; cache becomes load-bearing; VideoToolbox for encode. See §16. |
 
 ## 3. Principles
 
@@ -77,7 +81,7 @@ both.
 ### 4.2 Versioning
 
 `EditSpec` carries `spec_version` from the first commit, with explicit migration
-functions between versions. The golden set (§10) will outlive several schema changes,
+functions between versions. The golden set (§11) will outlive several schema changes,
 and v1 golden specs that no longer load are a golden set silently lost.
 
 ### 4.3 FocusTrack
@@ -160,7 +164,38 @@ open transcription.
 script. Same library, opposite purpose: one produces timings, the other independently
 checks that the render did not lie.
 
+### 5.4 Persistence
+
+Media and artifacts are files, in per-job directories. Records are rows, in SQLite.
+
+```
+data/
+  jobs/<job_id>/
+    source/        raw take, sidecar events
+    stages/        per-stage outputs, named by cache key
+    renders/       final files + metadata sidecars
+    spec.json      current EditSpec
+    spec.proposed.json
+  screencut.db
+```
+
+SQLite holds four things, none of them large:
+
+| Table | Purpose |
+|---|---|
+| `jobs` | Job record, status, spec version, degradations recorded by §7.4 |
+| `stage_cache` | Cache key → artifact path, so lookup is a query and not a directory walk |
+| `accepted_specs` | The learning corpus: accepted `EditSpec`s with the profile they were accepted under |
+| `pref_changes` | Changelog of every learned-default move and the jobs that caused it (§10.1) |
+
+Never put media in the database. The reason for having one at all is that both the
+learner and the review UI want queries — "median `zoom_factor` over the last 20 accepted
+jobs in `shorts_9x16`" is a query, and retrofitting a database once the golden set matters
+is worse than starting with one.
+
 ## 6. Rendering
+
+### 6.1 One renderer
 
 **FFmpeg is the only renderer.** `compile` turns `EditSpec + RenderProfile` into a filter
 graph. Zoom and crop become `zoompan`/`crop` expressions driven by the projected
@@ -174,7 +209,21 @@ export and the FFmpeg render — declaring one would mean maintaining two render
 debugging their divergence forever. The review UI is the normal correction path;
 Kdenlive is the escape hatch.
 
-### 6.1 Overlays
+### 6.2 Captions
+
+`plan_captions` emits `CaptionBlock`s that **always carry per-word timings**, because
+`align` produces them anyway and the cost of carrying them is zero.
+
+The first compiler renders plain timed ASS blocks and ignores the word array. Kinetic
+word-highlight rendering is a later, purely-compiler-side phase: per-word ASS override
+tags with active-word colouring. Because the spec already carries the data, that phase
+changes no schema, invalidates no golden specs, and needs no migration.
+
+This is the general shape to aim for — **model the end state, render the simple case** —
+and it is why the load-bearing milestone in the phase plan does not have hand-authored per-word ASS
+timing in its path.
+
+### 6.3 Overlays
 
 Overlays are **parameterized templates**, not free-form generation. A small fixed set —
 callout arrow, highlight box, label chip, progress pill — rendered deterministically from
@@ -246,14 +295,33 @@ before `APIConnectionError`) rather than one broad class.
 
 ### 7.5 Golden-set replay
 
-Replaying the golden set (§10) through the LLM stages is a non-latency-sensitive batch
+Replaying the golden set (§11) through the LLM stages is a non-latency-sensitive batch
 workload — exactly what the Message Batches API is for, at half the cost.
 
-## 8. Verification
+## 8. Review UI
+
+FastAPI serving a single page per job: the rendered video for each profile, the proposed
+`EditSpec` as an editable form, and a re-render button.
+
+Corrections are field edits. Committing writes a corrected spec, re-runs only the
+invalidated stages, and re-renders. **This design puts the entire burden on the stage
+cache** — if a caption-position tweak re-synthesizes narration, the loop is unusable and
+the corrections that feed §10 stop happening. Cache correctness is a review-UI
+requirement, not an optimization.
+
+A later phase adds static-frame overlay preview: scrub to a frame, see captions and
+overlays composited on canvas, drag to reposition, re-render only for motion and audio.
+Deferred deliberately — which corrections are made most often is not yet known, and
+building the preview before knowing that optimizes the wrong interaction.
+
+Full live preview is explicitly not a goal. That is a browser NLE, which is more work
+than the rest of this pipeline combined.
+
+## 9. Verification
 
 Three layers. The first two exist to keep garbage from reaching a person.
 
-### 8.1 Deterministic
+### 9.1 Deterministic
 
 - Render exit clean; duration within tolerance of the spec
 - Integrated loudness −14 LUFS, true peak below −1 dBTP, dialogue-to-bed ratio above threshold
@@ -265,18 +333,18 @@ Three layers. The first two exist to keep garbage from reaching a person.
 That last check earns its place: judder is *the* failure mode of automated vertical
 reframing, it is invisible in a still frame, and it is catchable with arithmetic.
 
-### 8.2 Objective semantic
+### 9.2 Objective semantic
 
 Open-transcribe the rendered audio and diff against the script (§5.3). One check that
 catches TTS mispronunciation, audio/video desync, a wrong take, truncated narration, and
 captions that drifted — all otherwise invisible until a human watches.
 
-### 8.3 Perceptual
+### 9.3 Perceptual
 
 A VLM over sampled frames, only for questions text cannot answer: is a caption sitting on
 the UI element it describes, is the zoom framing the cursor or empty space.
 
-## 9. Preference learning
+## 10. Preference learning
 
 Three tiers, none of them fine-tuning. Volume is too low, feedback too slow, and
 auditability matters more than marginal accuracy.
@@ -291,7 +359,7 @@ pacing. Plain statistics. Given decision #5, this tier does most of the work.
 **Exemplars** (`prefs/exemplars/`) — accepted specs retrieved by similarity and few-shot
 into the LLM stages. Only relevant to §7.1's model-using stages.
 
-### 9.1 Update rules
+### 10.1 Update rules
 
 - Never learn from a job that failed verification. A broken render's corrections poison
   the defaults.
@@ -300,14 +368,14 @@ into the LLM stages. Only relevant to §7.1's model-using stages.
 - Every default change is written to a changelog with the jobs that caused it. "It got
   worse and nobody can explain why" is the characteristic failure of self-tuning systems.
 
-### 9.2 Bootstrapping
+### 10.2 Bootstrapping
 
 With synthetic fixtures and zero accepted jobs there is nothing to learn from. Ship
 hand-written values in `constraints.yaml`; the learner activates after ~10–15 accepted
 real jobs. **Built earlier, it is dead code that still has to be debugged** — hence its
-position in §11.
+position late in the phase plan.
 
-## 10. Golden set
+## 11. Golden set
 
 Archived fixtures plus their approved `EditSpec`s, in `golden/`.
 
@@ -319,9 +387,9 @@ Any change to prompts, rules, or learned defaults replays the full set before ta
 effect. Preference updates are code changes: versioned, diffable, revertable.
 
 At least one fixture is **deliberately bad** — clipped audio, overlapping captions,
-juddering crop — so §8's checks are tested against known-bad rather than only known-good.
+juddering crop — so §9's checks are tested against known-bad rather than only known-good.
 
-## 11. Repository layout
+## 12. Repository layout
 
 ```
 screencut/
@@ -334,25 +402,16 @@ screencut/
   prefs/        constraints.yaml, defaults.json, exemplars/
   review/       FastAPI + web UI
   golden/       Fixtures, approved specs, replay harness
-  runner/       LocalRunner, cache
+  runner/       LocalRunner, cache index, SQLite schema + migrations
   docs/
+data/           gitignored — per-job directories and screencut.db (§5.4)
 ```
 
-## 12. Build sequence
+## 13. Build sequence
 
-1. **Spec models + synthetic fixture generator.** Pydantic, `spec_version`, migrations,
-   a scripted synthetic `FocusTrack`.
-2. **FFmpeg compiler + render, both profiles.** Get a watchable video out of a fixture.
-   This is the load-bearing milestone — spec → compile → render is the path everything
-   else hangs off.
-3. **TTS + forced alignment**, wired into the DAG behind the cache.
-4. **Verification**, including the deliberately-broken fixture.
-5. **Review UI.**
-6. **Preference learner** — once real accepted jobs exist.
+See [`implementation-phases.md`](implementation-phases.md).
 
-MLT export and re-ingest slot in whenever Kdenlive is first wanted; nothing depends on them.
-
-## 13. Risks
+## 14. Risks
 
 **R1 — FocusTrack rests on an unverified assumption.** The recorder is believed to export
 cursor and click events, but no recording has been obtained yet, and the whole
@@ -368,16 +427,46 @@ planner; building on the floor and receiving more means extending it.
 **R2 — Generated overlays under full autonomy.** The most open-ended component combined
 with no stage gate.
 
-*Mitigation:* the fixed template set in §6.1. If overlay quality is still poor at review
+*Mitigation:* the fixed template set in §6.3. If overlay quality is still poor at review
 time, the next lever is a gate on `plan_overlays` specifically, not on the whole pipeline.
 
-**R3 — Learner drift.** Addressed by §9.1 and §10; listed here because it is the failure
+**R3 — Learner drift.** Addressed by §10.1 and §11; listed here because it is the failure
 mode most likely to be noticed late.
 
-## 14. Open questions
+## 15. Open questions
 
 - Review UI across profiles: one job with a shared `EditSpec` and per-profile caption
   geometry, or two independent approvals? Current lean is one job, since most corrections
   apply to the shared spec.
 - Music beds: templates generate visual overlays, but audio beds still need a source.
 - Whether `still_4x5` is worth a distinct profile or whether stills reuse `shorts_9x16`.
+
+## 16. Platform notes — Apple Silicon
+
+The target machine is Apple Silicon. Three consequences, all of which want verifying in
+phase 0 rather than trusting this document.
+
+**The transcription backend must be swappable.** WhisperX's default backend is
+faster-whisper, which is built on CTranslate2 — and CTranslate2 has no Metal/MPS backend,
+so on Apple Silicon it runs on CPU. `mlx-whisper` and `whisper.cpp` both have Metal
+acceleration and are the likely choices here. This is exactly the payoff of the §5.1 CLI
+seam: the ASR backend is a swap of one executable, not a refactor.
+
+Note that WhisperX is two things — a transcription backend and a wav2vec2 forced-alignment
+model. The alignment half is ordinary PyTorch and can use MPS; only the transcription half
+has the CTranslate2 problem. They can be sourced independently.
+
+**F5-TTS on MPS is the open question.** It is PyTorch, so it should run, but op coverage
+under MPS varies and unsupported ops either fail or fall back to CPU
+(`PYTORCH_ENABLE_MPS_FALLBACK=1`) at a speed cost. This is the single most likely reason
+to end up wanting a remote GPU — which is what §5.1's `Runner` exists to absorb. Phase 0
+answers it.
+
+**Use VideoToolbox for encode.** FFmpeg's `h264_videotoolbox` / `hevc_videotoolbox`
+hardware encoders are a straightforward render-time win on macOS. Keep a software-encode
+path for the golden set, though: hardware encoders are not bit-reproducible across
+machines or OS versions, and §11's frame hashing needs determinism.
+
+**The cache stops being an optimization.** Slower local inference means the difference
+between a cached and uncached correction cycle is the difference between a usable review
+loop and an abandoned one.
