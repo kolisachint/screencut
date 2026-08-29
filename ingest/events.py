@@ -57,7 +57,15 @@ Used only when the sample rate cannot be measured; otherwise one sample interval
 so a click marks the sample it happened on rather than a handful either side."""
 
 DEFAULT_DWELL_RADIUS = 0.01
-"""Normalized distance below which consecutive samples count as the cursor resting."""
+"""Normalized distance the cursor may wander and still count as resting."""
+
+DEFAULT_DWELL_WINDOW_S = 0.3
+"""How far back to look when deciding the cursor is resting.
+
+Per-sample displacement is the wrong test: a cursor easing across the screen moves
+less between two adjacent samples than a resting hand does over a second, so a
+sample-to-sample radius classifies slow travel as dwell — and every zoom region in
+the video then merges into one."""
 
 
 def to_focus_track(
@@ -65,6 +73,7 @@ def to_focus_track(
     *,
     click_window_s: float | None = None,
     dwell_radius: float = DEFAULT_DWELL_RADIUS,
+    dwell_window_s: float = DEFAULT_DWELL_WINDOW_S,
 ) -> FocusTrack:
     """Normalize, classify, and hand back our format.
 
@@ -83,7 +92,7 @@ def to_focus_track(
         weight = MOVEMENT_WEIGHT
         if any(abs(sample.t - c) <= click_window_s for c in clicks):
             kind, weight = FocusKind.CLICK, CLICK_WEIGHT
-        elif index and _near(samples[index - 1], sample, events, dwell_radius):
+        elif _resting(samples, index, events, dwell_radius, dwell_window_s):
             kind, weight = FocusKind.DWELL, DWELL_WEIGHT
         points.append(FocusPoint(t=sample.t, x=x, y=y, weight=weight, kind=kind))
     return FocusTrack(points=points)
@@ -97,10 +106,31 @@ def _sample_interval(samples: list[CursorSample]) -> float:
     return gaps[len(gaps) // 2] or DEFAULT_CLICK_WINDOW_S
 
 
-def _near(a: CursorSample, b: CursorSample, events: RecorderEvents, radius: float) -> bool:
+def _resting(
+    samples: list[CursorSample],
+    index: int,
+    events: RecorderEvents,
+    radius: float,
+    window_s: float,
+) -> bool:
+    """True when the cursor stayed within `radius` for the whole preceding window."""
+    if index == 0:
+        return False
+    current = samples[index]
+    back = index - 1
+    seen = False
+    while back >= 0 and current.t - samples[back].t <= window_s:
+        if _distance(samples[back], current, events) > radius:
+            return False
+        seen = True
+        back -= 1
+    return seen and current.t - samples[max(back + 1, 0)].t >= window_s * 0.5
+
+
+def _distance(a: CursorSample, b: CursorSample, events: RecorderEvents) -> float:
     dx = (a.x - b.x) / events.width
     dy = (a.y - b.y) / events.height
-    return (dx * dx + dy * dy) ** 0.5 <= radius
+    return (dx * dx + dy * dy) ** 0.5
 
 
 def write_events(events: RecorderEvents, path: str | Path) -> Path:

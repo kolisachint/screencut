@@ -54,6 +54,8 @@ class Beat:
     that opens with a filler would leave an empty leading segment."""
     clicks: tuple[float, ...] = (0.45,)
     """Click times as a fraction of the slot. Two entries make a click cluster."""
+    label: str = ""
+    """What an overlay anchored on this beat says."""
 
 
 DEFAULT_BEATS: tuple[Beat, ...] = (
@@ -69,6 +71,7 @@ DEFAULT_BEATS: tuple[Beat, ...] = (
         tier=Tier.SUPPORTING,
         reason="navigation the viewer can follow but does not need narrated",
         filler_index=1,
+        label="Settings",
     ),
     Beat(
         words=("the", "export", "button", "is", "the", "part", "people", "miss"),
@@ -76,6 +79,7 @@ DEFAULT_BEATS: tuple[Beat, ...] = (
         tier=Tier.ESSENTIAL,
         reason="the one thing this recording exists to show",
         clicks=(0.40, 0.52),
+        label="Export",
     ),
     Beat(
         words=("and", "that", "is", "the", "whole", "flow", "end", "to", "end"),
@@ -167,40 +171,43 @@ def build_edit_decisions(beats: tuple[Beat, ...], slot_s: float = SLOT_S) -> Edi
 
 
 def build_overlays(beats: tuple[Beat, ...], slot_s: float = SLOT_S) -> list[OverlayIntent]:
-    """Three anchored overlays and one that spans the output.
+    """One anchored overlay per beat that can take one, plus one that spans the output.
 
-    One of them is deliberately anchored inside a silence removal. `plan_overlays`
-    sees material that will later be cut and may waste an overlay on it; compile
-    drops it deterministically (§4.5), and a fixture that never exercises that
-    path lets the bug live until real footage finds it.
+    One of them is deliberately placed inside the first silence removal.
+    `plan_overlays` sees material that will later be cut and may waste an overlay on
+    it; compile drops it deterministically (§4.5), and a fixture that never
+    exercises that path lets the bug live until real footage finds it.
     """
+    overlays: list[OverlayIntent] = []
+    anchored = (OverlayTemplate.LABEL_CHIP, OverlayTemplate.HIGHLIGHT_BOX)
+    for offset, template in enumerate(anchored):
+        index = offset + 1
+        if index >= len(beats):
+            break
+        beat = beats[index]
+        start, speech_end, _ = _slot_bounds(index, slot_s)
+        overlays.append(
+            OverlayIntent(
+                template=template,
+                text=beat.label or " ".join(beat.words[-2:]).title(),
+                anchor=Point(x=beat.target[0], y=beat.target[1]),
+                t_in=start + slot_s * 0.08,
+                t_out=speech_end,
+            )
+        )
     _, speech_end_0, slot_end_0 = _slot_bounds(0, slot_s)
-    start_1, speech_end_1, _ = _slot_bounds(1, slot_s)
-    start_2, speech_end_2, _ = _slot_bounds(2, slot_s)
-    return [
-        OverlayIntent(
-            template=OverlayTemplate.LABEL_CHIP,
-            text="Settings",
-            anchor=Point(x=beats[1].target[0], y=beats[1].target[1]),
-            t_in=start_1 + 0.5,
-            t_out=speech_end_1,
-        ),
-        OverlayIntent(
-            template=OverlayTemplate.HIGHLIGHT_BOX,
-            text="Export",
-            anchor=Point(x=beats[2].target[0], y=beats[2].target[1]),
-            t_in=start_2 + 0.4,
-            t_out=speech_end_2,
-        ),
+    gap = slot_end_0 - speech_end_0
+    overlays.append(
         OverlayIntent(
             template=OverlayTemplate.CALLOUT_ARROW,
-            text="dropped by compile — this lands inside a removal",
+            text="dropped by compile: this lands inside a removal",
             anchor=Point(x=0.5, y=0.5),
-            t_in=speech_end_0 + 0.2,
-            t_out=slot_end_0 - 0.2,
-        ),
-        OverlayIntent(template=OverlayTemplate.PROGRESS_PILL),
-    ]
+            t_in=speech_end_0 + gap * 0.1,
+            t_out=slot_end_0 - gap * 0.1,
+        )
+    )
+    overlays.append(OverlayIntent(template=OverlayTemplate.PROGRESS_PILL))
+    return overlays
 
 
 def build_events(

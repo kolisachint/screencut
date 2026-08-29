@@ -1,8 +1,9 @@
 # screencut — Design & Architecture
 
-Status: phase 1 built (`spec/`, `ingest/`, `schemas/`). Everything from §5's pipeline
-onward is still design — see [`implementation-phases.md`](implementation-phases.md) for
-what is built and what is next.
+Status: phases 1 and 2 built — the spec (`spec/`), the fixture generator (`ingest/`),
+`plan_focus` (`plan/`), and the FFmpeg compiler (`compile/`). The pipeline still runs one
+profile at a time from a CLI; the cache, real media, and every model stage are ahead. See
+[`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is
 
@@ -382,9 +383,21 @@ is worse than starting with one.
 ### 6.1 One renderer
 
 **FFmpeg is the only renderer.** `compile` turns `EditSpec + RenderProfile` into a filter
-graph. Zoom and crop become `zoompan`/`crop` expressions driven by the projected
-`FocusTrack`; captions burn in from generated ASS; overlays composite from
-template-rendered PNGs; audio ducking and loudness normalization run in the same graph.
+graph. Zoom and crop become `zoompan`/`crop` driven by the projected `FocusTrack`; captions
+burn in from generated ASS; overlays composite from template-rendered PNGs; audio ducking
+and loudness normalization run in the same graph.
+
+Two mechanisms, because the two projections are different shapes. A crop path is sampled,
+so it is computed per frame and delivered through `sendcmd` to a `crop` whose window is a
+constant size — which also keeps §9.1's judder check about motion rather than scale. A zoom
+is a few eased regions, which is analytic, so it stays an expression; `zoompan` takes no
+commands and is the only filter that can hold a window whose size varies. The same command
+stream carries overlay positions and the progress pill's fill, so an overlay follows the
+point it labels through whatever the frame is doing.
+
+Ducking is arithmetic too. The bed is driven by `asendcmd` from the word timings the spec
+already carries, rather than by a compressor listening to the narration — which makes
+`duck_db` the number it says instead of a setting that produces approximately that.
 
 **MLT XML is a one-way export, not a second renderer.** When a job needs something the
 spec cannot express, export to MLT, hand-edit in Kdenlive, and re-ingest the modified XML

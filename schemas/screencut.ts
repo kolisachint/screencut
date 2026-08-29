@@ -254,6 +254,10 @@ export interface FocusProjection {
    */
   mode: FocusMode;
   /**
+   * Magnification at a dwell region in zoom mode. In crop mode it tightens the constant
+   * window beyond the aspect fit, and 1.0 is the honest default there — cropping 9:16
+   * out of 16:9 already costs a 1.8x upscale.
+   *
    * @producedBy config (deterministic)
    */
   zoom_factor: number;

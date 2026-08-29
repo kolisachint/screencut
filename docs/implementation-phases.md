@@ -3,7 +3,7 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phase 1 is built; phase 0 is a spike on the target machine and has not been run. Phases
+Phases 1 and 2 are built; phase 0 is a spike on the target machine and has not been run. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
 
@@ -116,7 +116,7 @@ only the sustained one governs a real job.
 
 ---
 
-## Phase 2 — Compiler and render ★
+## Phase 2 — Compiler and render ★ — **built**
 
 **★ The load-bearing milestone.** Everything downstream assumes this works.
 
@@ -148,6 +148,21 @@ only the sustained one governs a real job.
 - Software-encoded renders are byte-identical across two runs.
 
 **Not in this phase:** kinetic captions, the cache, any model, real media.
+
+**How it came out.** Two mechanisms rather than one, because the two projections
+want different things. A crop path is a *sampled* path, so it is computed per frame
+in Python and delivered through `sendcmd` to a `crop` filter whose window never
+changes size. A zoom is a handful of eased regions, which is analytic, so it stays
+an FFmpeg expression — and it has to, because `zoompan` accepts no commands and is
+the only filter that can hold a window whose size varies. The same `sendcmd` stream
+carries overlay positions (an overlay follows the point it labels, so it moves when
+the crop moves) and the progress pill's fill, which is computed from output duration
+exactly as §4.5 says it should be.
+
+The trapezoid that shapes a zoom now exists twice — once as an expression, once in
+Python for the overlay projection. `tests/test_compile_graph.py` evaluates the
+generated expression against the Python one at quarter-second steps, because two
+implementations of one formula is the pair that drifts silently.
 
 **Why the projection is here and not in phase 5.** Cutting is a compiler capability, not a
 model capability — the model only decides *what*, and §4.5 makes the compiler responsible

@@ -25,6 +25,15 @@ from spec.origin import Stage, spec_field
 from spec.types import Normalized, PositiveSeconds, Rect, SpecModel
 
 
+ESTIMATED_CHAR_WIDTH_RATIO = 0.58
+"""Advance width per character for a bold sans face, as a fraction of font size.
+
+An estimate, not a measurement: measuring would put a font stack in the spec
+package. It is accurate enough to catch a caption that cannot possibly fit its
+box, which is the failure it exists to catch — and one that is otherwise found by
+watching a render with the text running off both edges."""
+
+
 class FocusMode(str, Enum):
     ZOOM_KEYFRAMES = "zoom_keyframes"
     """Widescreen: hold the frame, magnify dwell regions."""
@@ -87,7 +96,15 @@ class FocusProjection(SpecModel):
     and every one is a number you can also just set by hand when a job needs it."""
 
     mode: FocusMode = spec_field(produced_by=Stage.CONFIG)
-    zoom_factor: Annotated[float, Field(ge=1.0, le=4.0)] = spec_field(default=1.4, produced_by=Stage.CONFIG)
+    zoom_factor: Annotated[float, Field(ge=1.0, le=4.0)] = spec_field(
+        default=1.4,
+        produced_by=Stage.CONFIG,
+        description=(
+            "Magnification at a dwell region in zoom mode. In crop mode it tightens the "
+            "constant window beyond the aspect fit, and 1.0 is the honest default there — "
+            "cropping 9:16 out of 16:9 already costs a 1.8x upscale."
+        ),
+    )
     min_dwell_ms: Annotated[int, Field(ge=0)] = spec_field(default=600, produced_by=Stage.CONFIG)
     min_gap_ms: Annotated[int, Field(ge=0)] = spec_field(default=1200, produced_by=Stage.CONFIG)
     ease_ms: Annotated[int, Field(ge=0)] = spec_field(default=350, produced_by=Stage.CONFIG)
@@ -159,6 +176,22 @@ class RenderProfile(SpecModel):
             raise ValueError(f"profile {self.name}: caption box falls outside the safe area")
         return self
 
+    @model_validator(mode="after")
+    def _captions_fit_their_box(self) -> "RenderProfile":
+        """`type_scale` is a fraction of height and the box is a fraction of width,
+        so the two can drift apart silently — and do, since a profile is edited one
+        field at a time. Estimated, so it catches gross mismatches only; that is the
+        class of mistake worth failing at load rather than at review."""
+        line = self.captions.max_chars_per_line * ESTIMATED_CHAR_WIDTH_RATIO * self.captions.type_scale * self.height
+        box = self.captions.box.w * self.width
+        if line > box:
+            raise ValueError(
+                f"profile {self.name}: {self.captions.max_chars_per_line} characters at "
+                f"type_scale {self.captions.type_scale} need about {line:.0f}px but the caption box is "
+                f"{box:.0f}px wide — lower max_chars_per_line or type_scale, or widen the box"
+            )
+        return self
+
 
 SHORTS_9X16 = RenderProfile(
     name="shorts_9x16",
@@ -168,12 +201,12 @@ SHORTS_9X16 = RenderProfile(
     duration_budget=15.0,
     safe_area=SafeArea(top=0.10, right=0.06, bottom=0.16, left=0.06),
     captions=CaptionStyle(
-        box=Rect(x=0.08, y=0.66, w=0.84, h=0.16),
-        type_scale=0.052,
-        max_chars_per_line=24,
+        box=Rect(x=0.06, y=0.66, w=0.88, h=0.16),
+        type_scale=0.040,
+        max_chars_per_line=20,
         max_lines=3,
     ),
-    focus=FocusProjection(mode=FocusMode.CROP_PATH, zoom_factor=1.6, crop_lag_ms=250),
+    focus=FocusProjection(mode=FocusMode.CROP_PATH, zoom_factor=1.0, crop_lag_ms=250),
 )
 """Vertical short. The tight budget is why it drops tiers the demo keeps (§4.4.1)."""
 

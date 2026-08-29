@@ -238,6 +238,7 @@
         },
         "zoom_factor": {
           "default": 1.4,
+          "description": "Magnification at a dwell region in zoom mode. In crop mode it tightens the constant window beyond the aspect fit, and 1.0 is the honest default there \u2014 cropping 9:16 out of 16:9 already costs a 1.8x upscale.",
           "maximum": 4.0,
           "minimum": 1.0,
           "title": "Zoom Factor",

@@ -128,3 +128,19 @@ def test_quality_is_expressed_once_per_encode_path():
         EncodeSettings(quality=0)
     with pytest.raises(ValidationError):
         EncodeSettings(crf=99)
+
+
+def test_constraints_yaml_layers_over_the_builtin_profiles():
+    """§10's hard-constraint tier. Sparse overrides, deep-merged, then re-validated —
+    so an override that breaks an invariant fails at load, not at render time."""
+    from prefs import Constraints, resolve_profile as resolve
+
+    tuned = Constraints.model_validate({"profiles": {"shorts_9x16": {"focus": {"crop_lag_ms": 900}}}})
+    profile = resolve("shorts_9x16", tuned)
+    assert profile.focus.crop_lag_ms == 900
+    assert profile.focus.max_crop_delta_per_frame == SHORTS_9X16.focus.max_crop_delta_per_frame
+    assert profile.duration_budget == SHORTS_9X16.duration_budget
+
+    broken = Constraints.model_validate({"profiles": {"shorts_9x16": {"captions": {"type_scale": 0.2}}}})
+    with pytest.raises(ValidationError, match="caption box"):
+        resolve("shorts_9x16", broken)
