@@ -152,6 +152,18 @@ def _run_compile(request: StageRequest) -> StageResult:
                 "captions": len(plan.timeline.captions),
                 "overlays": len(plan.timeline.overlays),
                 "dropped_overlays": plan.timeline.dropped_overlays,
+                "assets": [
+                    {
+                        "template": asset.template,
+                        "path": str(asset.path.relative_to(job_dir)),
+                        "width": asset.width,
+                        "height": asset.height,
+                        "dx": asset.dx,
+                        "dy": asset.dy,
+                        "fill_rect": list(asset.fill_rect) if asset.fill_rect else None,
+                    }
+                    for asset in plan.assets
+                ],
             },
             indent=2,
         )
@@ -176,6 +188,51 @@ def _run_render(request: StageRequest) -> StageResult:
     (job_dir / request.output).parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(args, cwd=job_dir, check=True)
     return StageResult(stage=request.stage, output=request.output)
+
+
+def _verify_fingerprint(ctx: StageContext) -> dict[str, Any]:
+    """Verification reads the whole spec and the whole profile, so it re-runs
+    whenever either moves. It is seconds of work over a render that already
+    exists; being precise here would buy nothing."""
+    return {
+        "spec": ctx.spec.model_dump(mode="json", exclude={"created_at"}),
+        "profile": ctx.profile.model_dump(mode="json"),
+    }
+
+
+def _run_verify(request: StageRequest) -> StageResult:
+    from compile.overlays import OverlayAsset
+    from compile.timeline import project
+    from plan.focus import CropPathPlan, ZoomPlan
+    from verify import verify_render
+
+    spec, profile, job_dir = _context(request)
+    raw = json.loads((job_dir / request.inputs["focus"]).read_text())
+    focus = (CropPathPlan if raw["mode"] == "crop_path" else ZoomPlan).model_validate(raw)
+    manifest = json.loads((job_dir / request.inputs["compile"] / "manifest.json").read_text())
+    assets = [
+        OverlayAsset(
+            template=entry["template"],
+            path=job_dir / entry["path"],
+            width=entry["width"],
+            height=entry["height"],
+            dx=entry["dx"],
+            dy=entry["dy"],
+            fill_rect=tuple(entry["fill_rect"]) if entry["fill_rect"] else None,
+        )
+        for entry in manifest.get("assets", [])
+    ]
+    report = verify_render(
+        spec, profile, project(spec, profile), focus, job_dir / request.inputs["render"], assets
+    )
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(report.model_dump_json(indent=2))
+    return StageResult(
+        stage=request.stage,
+        output=request.output,
+        note=None if report.passed else f"{len(report.failures)} checks failed",
+    )
 
 
 # --- the graph ---------------------------------------------------------------
@@ -207,14 +264,26 @@ STAGES: dict[str, StageSpec] = {
             run=_run_render,
             suffix=".mp4",
         ),
+        StageSpec(
+            name="verify",
+            version=1,
+            depends_on=("plan_focus", "compile", "render"),
+            fingerprint=_verify_fingerprint,
+            run=_run_verify,
+        ),
     )
 }
 
-ORDER: tuple[str, ...] = ("plan_focus", "compile", "render")
-"""Topological order. Three stages do not need a sort; thirty will."""
+ORDER: tuple[str, ...] = ("plan_focus", "compile", "render", "verify")
+"""Topological order. Four stages do not need a sort; thirty will."""
 
 #: What each stage calls its upstream artifacts in `StageRequest.inputs`.
-INPUT_NAMES: dict[str, str] = {"plan_focus": "focus", "compile": "compile", "render": "render"}
+INPUT_NAMES: dict[str, str] = {
+    "plan_focus": "focus",
+    "compile": "compile",
+    "render": "render",
+    "verify": "verify",
+}
 
 
 def main(argv: list[str] | None = None) -> int:

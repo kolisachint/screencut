@@ -3,7 +3,8 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phases 1 to 3 are built; phase 0 is a spike on the target machine and has not been run. Phases
+Phases 1 to 3 are built, and phase 6's deterministic layer with them; phase 0 is a spike on
+the target machine and has not been run. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
 
@@ -300,9 +301,16 @@ decoration on top of this.
 
 ---
 
-## Phase 6 — Verification
+## Phase 6 — Verification — **deterministic layer built**
 
 **Goal:** stop garbage reaching a person.
+
+**Built out of order, and deliberately.** §9.1's checks need a spec, a profile and
+a render, and nothing else — not real media, not a model. They were pulled forward
+because they are what will catch problems on the *first* real recording, which is
+when nobody yet knows what to look for. §9.2's transcript round-trip and §9.3's
+perceptual layer stay where they are: both need something phase 0 has not chosen
+yet.
 
 **Build**
 
@@ -329,6 +337,26 @@ decoration on top of this.
 
 **Not in this phase:** the VLM perceptual layer. Add it once you know which real failures
 the deterministic checks miss.
+
+**How it came out.** `verify` is a pipeline stage like any other, so a report is
+cached, keyed and invalidated with everything else, and `screencut run` prints it.
+The report is a list of findings rather than a verdict, because §9.1's most useful
+outputs are numbers — the budget overrun in seconds, the trim composition — and a
+check that can only say no cannot say "7.4 seconds over".
+
+Two of §11's four breakages turned out to be **unrepresentable**: `EditSpec`
+refuses overlapping caption blocks and `plan_focus` rate-limits the crop by
+construction. Their checks stay, exercised against hand-built inputs, because the
+thing that makes them impossible today is code that can change. The broken fixture
+carries the two a spec can still express, plus an overlay that occludes a caption.
+
+The checks paid for themselves before they were finished. Running them on the good
+fixture failed twice for real reasons: overlays placed a pixel outside the safe
+area because a normalized inset was rounded to pixels in two places that disagreed,
+and the fixture's own highlight box sat on top of the caption. The first is fixed by
+one shared rounding helper; the second by moving the fixture's target, because a
+good fixture has to actually be good or the check fires every run and gets ignored
+within a week.
 
 ---
 

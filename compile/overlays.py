@@ -155,7 +155,8 @@ def _highlight_box(text: str, profile: RenderProfile):
 
 def _progress_pill(text: str, profile: RenderProfile):
     """A track across the bottom of the safe area. The graph fills it per frame."""
-    w = int(profile.width * (1.0 - profile.safe_area.left - profile.safe_area.right))
+    left, _, right, _ = profile.safe_area.pixels(profile.width, profile.height)
+    w = right - left
     h = max(int(profile.height * 0.008), 4)
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">
   <rect x="0" y="0" width="{w}" height="{h}" rx="{h // 2}" fill="{PAPER}" fill-opacity="0.28"/>

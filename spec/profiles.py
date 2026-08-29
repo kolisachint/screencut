@@ -16,6 +16,7 @@ Profile fields are `Stage.CONFIG`: hand-written now, moved by the learner later
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Annotated
 
@@ -63,6 +64,22 @@ class SafeArea(SpecModel):
         if self.top + self.bottom >= 1.0 or self.left + self.right >= 1.0:
             raise ValueError("safe area insets leave no usable frame")
         return self
+
+    def pixels(self, width: int, height: int) -> tuple[int, int, int, int]:
+        """The safe area's edges in output pixels: (left, top, right, bottom).
+
+        Rounded **inward** — ceil the low edges, floor the high ones — so turning a
+        normalized inset into pixels never lands a pixel outside the area it was
+        meant to stay within. Shared by everything that sizes or places into the
+        safe area, because two callers rounding independently disagree by a pixel
+        and §9.1 then reports a real-looking failure that is only arithmetic.
+        """
+        return (
+            math.ceil(self.left * width),
+            math.ceil(self.top * height),
+            math.floor((1.0 - self.right) * width),
+            math.floor((1.0 - self.bottom) * height),
+        )
 
     def contains(self, rect: Rect) -> bool:
         return (

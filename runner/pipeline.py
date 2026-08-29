@@ -22,6 +22,7 @@ from runner.cache import cache_key
 from runner.contract import StageRequest
 from runner.local import LocalRunner
 from runner.stages import INPUT_NAMES, ORDER, STAGES, StageContext
+from verify.report import VerificationReport
 
 
 @dataclass
@@ -42,6 +43,11 @@ class JobRun:
     job_id: str
     outcomes: list[StageOutcome] = field(default_factory=list)
     renders: dict[str, Path] = field(default_factory=dict)
+    reports: dict[str, VerificationReport] = field(default_factory=dict)
+
+    @property
+    def verified(self) -> bool:
+        return all(report.passed for report in self.reports.values())
 
     @property
     def did_no_work(self) -> bool:
@@ -86,7 +92,7 @@ def run_job(
             job_id=spec.job_id,
             job_dir=str(job_dir),
             spec_version=spec.spec_version,
-            status="rendered",
+            status="rendered" if run.verified else "failed_verification",
         )
     return run
 
@@ -156,6 +162,15 @@ def _run_profile(
         )
 
     run.renders[profile.name] = _publish(job_dir, Path(paths["render"]), spec.job_id, profile.name)
+    report = VerificationReport.model_validate_json((job_dir / paths["verify"]).read_text())
+    run.reports[profile.name] = report
+    db.record_verification(
+        connection,
+        job_id=spec.job_id,
+        profile=profile.name,
+        passed=report.passed,
+        findings_json=report.model_dump_json(),
+    )
 
 
 def _is_cached(connection, key: str, path: Path, directory: bool) -> bool:

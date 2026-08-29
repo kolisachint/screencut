@@ -38,7 +38,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{result.job_id}: ran {', '.join(result.ran())}")
     for profile, path in result.renders.items():
         print(f"  {profile} -> {path}")
-    return 0
+    for report in result.reports.values():
+        print(report.summary())
+    return 0 if result.verified else 1
 
 
 if __name__ == "__main__":

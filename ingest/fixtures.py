@@ -75,7 +75,7 @@ DEFAULT_BEATS: tuple[Beat, ...] = (
     ),
     Beat(
         words=("the", "export", "button", "is", "the", "part", "people", "miss"),
-        target=(0.58, 0.71),
+        target=(0.58, 0.42),
         tier=Tier.ESSENTIAL,
         reason="the one thing this recording exists to show",
         clicks=(0.40, 0.52),
@@ -285,6 +285,76 @@ def build_spec(
     return Fixture(spec=spec, events=events, beats=beats, slot_s=slot_s)
 
 
+# --- the deliberately bad fixture -------------------------------------------
+
+LONG_WORD = "supercalifragilisticexpialidocious"
+
+
+def break_fixture(fixture: Fixture) -> Fixture:
+    """Damage a good fixture in the ways a *spec* can express (§11).
+
+    §9's checks have to be tested against known-bad rather than only known-good, or
+    a check that never fires is indistinguishable from one that cannot. Three
+    breakages, chosen because the schema still permits them:
+
+    - a cut whose edges land inside words, which clips them — invisible in a still
+      frame and audible immediately,
+    - a caption word too long to wrap into the profile's line length,
+    - an overlay anchored where the caption box will be, so it occludes one.
+
+    Two of §11's four — overlapping captions and a juddering crop — are *not* here,
+    and deliberately: `EditSpec` refuses overlapping caption blocks and `plan_focus`
+    rate-limits the crop by construction, so neither is representable. Their checks
+    are exercised in tests against hand-built inputs, which is the honest place for
+    a check on something the pipeline cannot produce.
+    """
+    spec = fixture.spec
+    filler = next(r for r in spec.edit.removals if r.kind is RemovalKind.FILLER)
+    word = (spec.source.duration / len(fixture.beats)) * SPEECH_FRACTION / len(fixture.beats[1].words)
+    shift = word / 2
+
+    removals = [
+        r.model_copy(update={"t_in": r.t_in + shift, "t_out": r.t_out + shift}) if r is filler else r
+        for r in spec.edit.removals
+    ]
+    segments = []
+    for segment in spec.edit.segments:
+        if abs(segment.t_out - filler.t_in) < TIME_NUDGE:
+            segment = segment.model_copy(update={"t_out": segment.t_out + shift})
+        elif abs(segment.t_in - filler.t_out) < TIME_NUDGE:
+            segment = segment.model_copy(update={"t_in": segment.t_in + shift})
+        segments.append(segment)
+
+    captions = list(spec.captions)
+    first = captions[0]
+    captions[0] = first.model_copy(
+        update={"words": [first.words[0].model_copy(update={"text": LONG_WORD})] + list(first.words[1:])}
+    )
+
+    _, speech_end_0, _ = _slot_bounds(0, fixture.slot_s)
+    overlays = list(spec.overlays) + [
+        OverlayIntent(
+            template=OverlayTemplate.LABEL_CHIP,
+            text="sits on the caption",
+            anchor=Point(x=0.5, y=0.78),
+            t_in=0.5,
+            t_out=speech_end_0,
+        )
+    ]
+    broken = spec.model_copy(
+        update={
+            "job_id": f"{spec.job_id}-broken",
+            "edit": EditDecisions(removals=removals, segments=segments),
+            "captions": captions,
+            "overlays": overlays,
+        }
+    )
+    return Fixture(spec=broken, events=fixture.events, beats=fixture.beats, slot_s=fixture.slot_s)
+
+
+TIME_NUDGE = 1e-6
+
+
 # --- the generated source video ---------------------------------------------
 
 _BOX_COLORS = ("cyan", "orange", "magenta", "yellow")
@@ -383,9 +453,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--no-video", action="store_true", help="Write the spec and events, skip ffmpeg.")
+    parser.add_argument("--broken", action="store_true",
+                        help="Damage the fixture in the ways §11 wants tested against known-bad.")
     args = parser.parse_args(argv)
 
     fixture = build_spec(args.job_id, width=args.width, height=args.height, fps=args.fps)
+    if args.broken:
+        fixture = break_fixture(fixture)
     out = write_fixture(Path(args.out), fixture, with_video=not args.no_video)
     print(f"{out}  ({fixture.spec.source.duration:.1f}s, {len(fixture.spec.edit.segments)} segments, "
           f"{len(fixture.spec.edit.removals)} removals)")

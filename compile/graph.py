@@ -257,10 +257,9 @@ def clamp_to_safe_area(x: int, y: int, asset: OverlayAsset, profile: RenderProfi
     the alternative — letting it slide off — is a check that fails on footage that
     looked fine.
     """
-    left = int(profile.safe_area.left * profile.width)
-    top = int(profile.safe_area.top * profile.height)
-    right = int((1.0 - profile.safe_area.right) * profile.width) - asset.width
-    bottom = int((1.0 - profile.safe_area.bottom) * profile.height) - asset.height
+    left, top, right, bottom = profile.safe_area.pixels(profile.width, profile.height)
+    right -= asset.width
+    bottom -= asset.height
     return min(max(x, left), max(right, left)), min(max(y, top), max(bottom, top))
 
 
@@ -314,8 +313,8 @@ def video_chain(spec: EditSpec, profile: RenderProfile, timeline: EditedTimeline
     for index, (overlay, asset) in enumerate(zip(timeline.overlays, assets)):
         nxt = f"ov{index}"
         if overlay.spans_whole_output:
-            x = int(profile.safe_area.left * profile.width)
-            y = int((1.0 - profile.safe_area.bottom) * profile.height) - asset.height
+            left, _, _, bottom = profile.safe_area.pixels(profile.width, profile.height)
+            x, y = left, bottom - asset.height
             parts.append(f"[{label}][{overlay_input_base + index}:v]overlay@o{index}=x={x}:y={y}[{nxt}]")
             label = nxt
             if asset.fill_rect:

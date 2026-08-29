@@ -1,0 +1,11 @@
+{
+  "spec_free_checks": {
+    "demo_16x9": [
+      "cut_mid_word"
+    ],
+    "shorts_9x16": [
+      "caption_line_length",
+      "cut_mid_word"
+    ]
+  }
+}

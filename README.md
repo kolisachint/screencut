@@ -15,11 +15,12 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 3 are built.** The data model everything else is written against;
-the compiler that turns it into video — `plan_focus`, the time projection, ASS
-captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios
-at two different lengths; and the runner that makes re-running cheap, which is
-what makes the review loop possible at all.
+**Phases 1 to 3 are built, plus §9.1's deterministic checks.** The data model
+everything else is written against; the compiler that turns it into video —
+`plan_focus`, the time projection, ASS captions, SVG overlays, an FFmpeg graph
+rendering one spec to two aspect ratios at two different lengths; the runner that
+makes re-running cheap; and verification that reads the render back and reports
+what is wrong with it.
 
 Phase 0 is an environment spike on the target machine — a base-model M1 MacBook
 Air, 8GB, fanless — and has not been run. It answers whether cursor events are
@@ -28,13 +29,15 @@ costs in memory, which on 8GB is the number that decides the rest. Nothing in
 phase 1 depends on those answers, which is why it could go first.
 
 Next is phase 4 — real ingest and transcription, and the first output worth
-posting.
+posting. It needs the target machine: a real recording to write the recorder
+adapter against, and an ASR backend to pick.
 
 ## Quickstart
 
 ```sh
 make install     # the package and its dev dependencies
 make run         # a synthetic job through the whole pipeline (needs ffmpeg)
+make broken      # the deliberately bad fixture, so the checks are seen firing
 make check       # tests, generated-artifact drift, TypeScript typecheck
 ```
 
@@ -68,6 +71,8 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 | `compile/` | The time projection, ASS captions, SVG overlay templates, the FFmpeg graph |
 | `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
 | `runner/` | The stage contract, `LocalRunner`, the content-addressed cache, SQLite |
+| `verify/` | §9.1's deterministic checks, and the report they produce |
+| `golden/` | The deliberately bad fixture, and the findings it must produce |
 | `schemas/` | Generated — four JSON Schemas and the TypeScript types. Regenerate with `make generated` |
 | `tests/` | The invariants, the round-trip, the migration, the graph, and real renders |
 

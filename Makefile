@@ -1,5 +1,5 @@
 # screencut — see docs/architecture.md and docs/implementation-phases.md.
-.PHONY: help install schema types generated check-generated typecheck test fixture run check clean
+.PHONY: help install schema types generated check-generated typecheck test fixture run broken check clean
 
 FIXTURE ?= data/fixtures/demo01
 ENCODER ?= software
@@ -34,6 +34,10 @@ fixture:  ## Generate the synthetic fixture job, source video included.
 
 run: fixture  ## Run the fixture job through the pipeline. ENCODER=videotoolbox on macOS.
 	python3 -m runner.cli run $(FIXTURE) --encoder $(ENCODER)
+
+broken:  ## Run the deliberately bad fixture, so §9.1's checks are seen firing.
+	python3 -m ingest.fixtures --out data/fixtures/broken01 --job-id fixture --broken
+	-python3 -m runner.cli run data/fixtures/broken01 --encoder $(ENCODER)
 
 check: test check-generated typecheck  ## Everything CI would run.
 

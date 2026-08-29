@@ -68,6 +68,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "0002_verifications",
+        """
+        CREATE TABLE verifications (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id        TEXT NOT NULL,
+            profile       TEXT NOT NULL,
+            passed        INTEGER NOT NULL,
+            findings_json TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX verifications_by_job ON verifications (job_id, profile);
+        """,
+    ),
 ]
 
 
@@ -178,6 +192,45 @@ def lookup_artifact(connection: sqlite3.Connection, cache_key: str) -> str | Non
 
 def forget_artifact(connection: sqlite3.Connection, cache_key: str) -> None:
     connection.execute("DELETE FROM stage_cache WHERE cache_key = ?", (cache_key,))
+
+
+# --- verification (§9) -------------------------------------------------------
+
+
+def record_verification(
+    connection: sqlite3.Connection, *, job_id: str, profile: str, passed: bool, findings_json: str
+) -> None:
+    """A report per render, on the job record (§9.1).
+
+    A table rather than a column because §10.1's first rule — never learn from a
+    job that failed verification — is a query, and a broken render's corrections
+    poison the defaults.
+    """
+    connection.execute(
+        "INSERT INTO verifications (job_id, profile, passed, findings_json, created_at) VALUES (?, ?, ?, ?, ?)",
+        (job_id, profile, int(passed), findings_json, now()),
+    )
+
+
+def latest_verification(connection: sqlite3.Connection, job_id: str, profile: str) -> sqlite3.Row | None:
+    return connection.execute(
+        "SELECT * FROM verifications WHERE job_id = ? AND profile = ? ORDER BY id DESC LIMIT 1",
+        (job_id, profile),
+    ).fetchone()
+
+
+def verified_jobs(connection: sqlite3.Connection, profile: str) -> list[str]:
+    """Jobs whose latest report for this profile passed — the learner's corpus (§10.1)."""
+    rows = connection.execute(
+        """
+        SELECT job_id, passed FROM verifications v
+        WHERE profile = ? AND id = (
+            SELECT MAX(id) FROM verifications WHERE job_id = v.job_id AND profile = v.profile
+        )
+        """,
+        (profile,),
+    ).fetchall()
+    return [row["job_id"] for row in rows if row["passed"]]
 
 
 # --- the learning corpus (phases 7 and 10) -----------------------------------

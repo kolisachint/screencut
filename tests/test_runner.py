@@ -20,7 +20,7 @@ from runner.cache import MissingModelParams, cache_key, digest, file_digest, req
 from runner.contract import StageFailed, StageRequest
 from runner.local import LocalRunner
 from runner.pipeline import run_job
-from runner.stages import STAGES
+from runner.stages import ORDER, STAGES
 from spec import Encoder
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
@@ -170,7 +170,7 @@ def go(job: Path, database: Path, **kwargs):
 def test_the_first_run_does_the_work_and_the_second_does_none(job, database):
     first = go(job, database)
     assert not first.did_no_work
-    assert [o.stage for o in first.outcomes] == ["plan_focus", "compile", "render"]
+    assert [o.stage for o in first.outcomes] == ["plan_focus", "compile", "render", "verify"]
     assert go(job, database).did_no_work, "and it says so, which is the exit criterion"
 
 
@@ -195,7 +195,9 @@ def test_changing_only_caption_text_reruns_compile_and_render_and_nothing_upstre
     spec_path.write_text(json.dumps(doc, indent=2, sort_keys=True))
     try:
         result = go(job, database)
-        assert result.ran() == ["shorts_9x16/compile", "shorts_9x16/render"]
+        assert result.ran() == [
+            "shorts_9x16/compile", "shorts_9x16/render", "shorts_9x16/verify"
+        ]
     finally:
         spec_path.write_text(original)
 
@@ -204,9 +206,10 @@ def test_changing_only_caption_text_reruns_compile_and_render_and_nothing_upstre
 @pytest.mark.parametrize(
     "bumped, expected",
     [
-        ("plan_focus", ["plan_focus", "compile", "render"]),
-        ("compile", ["compile", "render"]),
-        ("render", ["render"]),
+        ("plan_focus", ["plan_focus", "compile", "render", "verify"]),
+        ("compile", ["compile", "render", "verify"]),
+        ("render", ["render", "verify"]),
+        ("verify", ["verify"]),
     ],
 )
 def test_bumping_a_stage_version_invalidates_it_and_its_dependents_and_nothing_else(
@@ -227,18 +230,21 @@ def test_a_missing_artifact_is_a_miss_even_with_a_row_in_the_database(job, datab
     render = next(o for o in result.outcomes if o.stage == "render")
     (job / render.path).unlink()
     (job / "renders" / f"run_shorts_9x16.mp4").unlink()
+    # Only the render: it comes back byte-identical, so its key is unchanged and
+    # the verification report it produced is still about this exact file.
     assert go(job, database).ran() == ["shorts_9x16/render"]
 
 
 @needs_ffmpeg
 def test_force_reruns_everything(job, database):
     go(job, database)
-    assert len(go(job, database, force=True).ran()) == 3
+    assert len(go(job, database, force=True).ran()) == len(ORDER)
 
 
 @needs_ffmpeg
 def test_the_job_record_carries_what_review_will_need(job, database):
-    go(job, database)
+    result = go(job, database)
+    assert result.verified, "the good fixture must pass its own checks"
     with db.connect(database) as connection:
         row = db.get_job(connection, "run")
         cached = connection.execute(
@@ -246,5 +252,35 @@ def test_the_job_record_carries_what_review_will_need(job, database):
         ).fetchall()
     assert row["status"] == "rendered" and row["spec_version"] >= 1
     assert json.loads(row["degradations"]) == [], "no stage degrades until phase 5 (§7.4)"
-    assert {r["stage"] for r in cached} == {"plan_focus", "compile", "render"}
+    assert {r["stage"] for r in cached} == set(ORDER)
     assert {r["profile"] for r in cached} == {"shorts_9x16"}
+
+
+@needs_ffmpeg
+def test_a_verification_report_lands_on_the_job_record(job, database):
+    """§10.1's first rule — never learn from a job that failed verification — is a
+    query, which is why the report is a row rather than only a file."""
+    go(job, database)
+    with db.connect(database) as connection:
+        latest = db.latest_verification(connection, "run", "shorts_9x16")
+        corpus = db.verified_jobs(connection, "shorts_9x16")
+    assert latest is not None and latest["passed"] == 1
+    assert json.loads(latest["findings_json"])["profile"] == "shorts_9x16"
+    assert "run" in corpus
+
+
+@needs_ffmpeg
+def test_a_job_that_fails_verification_says_so_on_its_record(tmp_path_factory, database):
+    from ingest.fixtures import break_fixture
+
+    directory = tmp_path_factory.mktemp("broken")
+    write_fixture(
+        directory,
+        break_fixture(build_spec("broken", width=640, height=360, beats=DEFAULT_BEATS[:2], slot_s=2.0)),
+        with_video=True,
+    )
+    result = run_job(directory, [small("shorts_9x16")], encoder=Encoder.SOFTWARE, db_path=database)
+    assert not result.verified
+    with db.connect(database) as connection:
+        assert db.get_job(connection, "broken-broken")["status"] == "failed_verification"
+        assert "broken-broken" not in db.verified_jobs(connection, "shorts_9x16")
