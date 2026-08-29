@@ -15,6 +15,34 @@ generation, rendering, automated verification, human review, preference learning
 **Out of scope:** recording itself (an external recorder produces the input), and
 publishing (the pipeline ends at a file plus a metadata sidecar; posting is manual).
 
+### 1.1 AI-edited, not AI-generated
+
+This is the philosophy, and it decides more design questions than any other line in this
+document.
+
+**Every frame is captured.** What appears on screen is a real recording of a real screen,
+cropped, zoomed, cut, captioned and annotated — never synthesized. There is no image
+model, no video model, and no B-roll generator anywhere in this system, and adding one
+would not be an extension of this design but a replacement for it.
+
+The model's job is the job of an editor: decide what to cut, where to look, what to
+emphasize, what to label, what to call the thing. Those are decisions *about* captured
+footage. Producing footage is not on the list.
+
+Two boundary cases, adjudicated once so they stop being arguments:
+
+- **Written language is in scope.** `script_draft` produces words you then perform;
+  the metadata sidecar produces copy for the post. Neither is media, and neither reaches
+  a frame without passing through you.
+- **Your synthesized voice is in scope** (decision #20). F5-TTS cloned from your own
+  reference audio, reading your own script, is performance substitution — the same
+  editorial act as a re-recorded pickup line, with the same author. A stock voice or a
+  voice that is not yours would not be, and is not offered.
+
+Overlays are the case that looks like generation and is not: a fixed template set filled
+with text (§6.3) is a lower-third, which is editing furniture rather than invented
+content.
+
 Single user, single style. No multi-tenancy, no auth, no billing, no job queue beyond
 what one person running one job at a time needs.
 
@@ -36,13 +64,19 @@ Recorded so future-us knows what was chosen deliberately versus what merely happ
 | 10 | Fixtures | Synthetic first | Ingest is an adapter boundary. See risk R1. |
 | 11 | Overlays | Generated from templates per video | SVG re-renders correctly across aspect ratios; a bitmap library would not. See risk R2. |
 | 12 | Autonomy | Full auto, review the finished render | Fastest feedback per job; cleanest diffs. Costs compute on bad scripts. |
-| 13 | LLM stages | Anthropic API, `claude-opus-5` | See §7. |
+| 13 | LLM interface | A coding-agent CLI, not a provider SDK | No SDK dependency, no key handling here, model is a flag. Costs constrained decoding. See §7. |
 | 14 | Captions | Plain blocks first, kinetic later | Spec carries word timings from day one; only the compiler changes later. See §6.2. |
 | 15 | Review UX | Form + re-render; overlay preview later | Puts the whole weight on the stage cache. See §8. |
 | 16 | State | SQLite + files on disk | Media in per-job directories, records and cache index in SQLite. See §5.4. |
 | 17 | Hardware | Apple Silicon | ASR backend must be swappable; cache becomes load-bearing; VideoToolbox for encode. See §16. |
+| 18 | Content origin | Every frame is captured, never synthesized | No image, video, or B-roll model exists in this design. See §1.1. |
+| 19 | Editorial decisions | Cuts and transcript cleanup are model stages | `plan_edit` fills the `EditSpec` in/out points nothing else produces. See §4.4. |
+| 20 | Voice | F5-TTS cloned from your own reference audio | Performance substitution, not content generation — the one synthesis this design allows, and only of you. See §1.1. |
 
 ## 3. Principles
+
+Principle 0 is §1.1 — the footage is captured, the model edits it. The four below are how
+that gets enforced in code rather than asserted in prose.
 
 1. **The spec is the system.** Planner, renderer, verifier, review UI, and learner all
    read and write one versioned document. Everything else is a detail.
@@ -112,7 +146,31 @@ Planning from a `FocusTrack` is deterministic, governed by a handful of tunables
 | `max_crop_delta_per_frame` | Ceiling that prevents judder |
 
 Every one is a scalar the preference store can learn by median. No model participates in
-the highest-impact decision in the pipeline.
+the highest-impact *spatial* decision in the pipeline.
+
+### 4.4 EditDecisions
+
+Where `FocusTrack` answers "where do we look", `EditDecisions` answers "what survives".
+It is the other half of the `EditSpec`, and under §1.1 it is the part that makes this an
+editing tool rather than a captioning tool.
+
+Two fields, both produced by `plan_edit` (§7.1):
+
+**`cuts`** — the in/out points §4.1 always listed and nothing previously produced. A list
+of `(t_in, t_out, reason)` retained segments in source time. Dead air, a fumbled restart,
+the thirty seconds spent finding a menu — removed. `reason` is retained because the
+review UI has to show *why* something was cut before a person can meaningfully accept it.
+
+**`transcript_edits`** — disfluency removal as timing ranges, not as rewritten text. A
+removed "um" is `(t_start, t_end, kind)`, resolved against the word timings `align`
+already produces. Modelling the edit as a range rather than a replacement string is what
+keeps this an edit: the audio and the caption are cut at the same instants, from the same
+decision, and nothing is put into your mouth that you did not say.
+
+Both are ordinary spec fields, which means they are diffable in review, learnable in §10
+(this is what `cut pacing` refers to), and covered by the golden set. Neither is allowed
+to invent a segment that is not in the source — a `t_out` beyond source duration is a
+schema violation, not a judgement call.
 
 ## 5. Pipeline
 
@@ -122,13 +180,15 @@ flowchart TD
     ingest --> draft["script_draft (conditional)"]
     draft --> tts[tts]
     tts --> align[align]
-    align --> caps[plan_captions]
+    align --> edit[plan_edit]
+    edit --> caps[plan_captions]
     focus --> caps
-    align --> stick[plan_overlays]
+    edit --> stick[plan_overlays]
     focus --> stick
     caps --> compile[compile per profile]
     stick --> compile
     focus --> compile
+    edit --> compile
     compile --> render[render]
     render --> verify[verify]
     verify --> review[review UI]
@@ -136,6 +196,12 @@ flowchart TD
 
 `plan_focus` has no audio dependency and runs parallel to TTS. Everything else waits on
 `align`, because narration timing drives caption timing and edit pacing.
+
+`plan_edit` sits between `align` and everything downstream of it, and the ordering is
+load-bearing: captions, overlays and the compiler all work in the *edited* timeline, so
+cuts must be decided before anything is laid against them. Deciding cuts afterwards means
+re-timing captions and re-anchoring overlays around removed ranges — the same work done
+twice, and wrong the second time.
 
 ### 5.1 Stage contract
 
@@ -146,10 +212,21 @@ worker and retrieves outputs. Pipeline code is identical under both.
 
 Build only `LocalRunner`.
 
+The seam is also what makes decision #13 cost nothing: an LLM stage is a subprocess that
+happens to be a coding agent, sitting alongside the subprocesses that happen to be FFmpeg
+and Whisper. There is no separate inference path in this codebase, and no second
+mechanism to maintain. See §7.3.
+
 ### 5.2 Caching
 
 Content-addressed, keyed on `(stage_name, input_hash, params_hash)`. Non-negotiable — see
 principle 4.
+
+For LLM stages, `params_hash` **must include the model identifier and a prompt version**.
+The same transcript under a different model, or under a revised prompt, is a different
+artifact; a key that omits them serves a stale result after exactly the change you were
+trying to evaluate. This is the one cache subtlety that will not announce itself — it
+looks like the prompt edit had no effect.
 
 ### 5.3 The two ASR calls are different
 
@@ -235,68 +312,117 @@ generation would be unpredictable, untestable, and unlearnable, and under full a
 
 ## 7. LLM stages
 
-Provider: **Anthropic API**, model `claude-opus-5`, via the official `anthropic` Python SDK.
+Interface: **a coding-agent CLI** — [`hoocode`](https://github.com/kolisachint/hoocode) —
+invoked through the §5.1 stage contract like any other executable (decision #13). This
+codebase carries no provider SDK, no API key handling, and no bespoke inference layer.
+Model selection is a flag on the subprocess, so switching models is a config change and
+not a code change.
 
-### 7.1 Which stages use a model
+### 7.1 Which surfaces use a model
 
-| Stage | Model? | Rationale |
+The full surface survey, not only the stages that say yes. A "no" in this table is a
+design commitment that something stays deterministic — it is load-bearing, and worth as
+much as the yeses.
+
+| Surface | Model? | Rationale |
 |---|---|---|
-| `plan_focus` | No | Arithmetic over `FocusTrack` |
-| `plan_captions` (timing, layout) | No | Derived from `align` output and profile geometry |
-| Audio levels, ducking | No | Loudness measurement |
+| Ingest / recorder adapter | No | Format translation. Writing the adapter is agent work; running it is not. |
+| `plan_focus` | No | Arithmetic over `FocusTrack` (§4.3) |
+| `plan_edit` — cuts | **Yes** | What survives is *the* editorial decision (§4.4) |
+| `plan_edit` — transcript cleanup | **Yes** | Disfluency removal over word timings (§4.4) |
 | `script_draft` | Yes | Language |
+| `align` | No | Forced alignment (§5.3) |
+| `plan_captions` — timing, layout | No | Derived from `align` output and profile geometry |
 | Emphasis word selection | Yes | Taste |
-| `plan_overlays` (template + anchor + text) | Yes | Taste, bounded by the template set |
-| Metadata sidecar (title, description, tags) | Yes | Language |
+| `plan_overlays` — template, anchor, text | Yes | Taste, bounded by the template set (§6.3) |
+| Audio levels, ducking | No | Loudness measurement |
+| `compile` | **Never** | Principle 2. No model emits an FFmpeg argument. |
+| Deterministic checks (§9.1) | No | Arithmetic — and a check a model can talk its way out of is not a check |
+| Transcript diff (§9.2) | Diff no, triage yes | Producing the diff is deterministic; judging a difference benign is not |
+| Perceptual checks (§9.3) | Yes | Vision, and only for what text cannot answer |
+| Metadata sidecar | Yes | Language |
+| Review UI | No | Corrections are structural diffs — that is the entire point of §8 |
+| Preference learner (§10) | No | Statistics. Auditability beats marginal accuracy. |
+| Golden replay (§11) | No | Field diff with per-field tolerances |
 
-### 7.2 Structured output is the whole trick
+Two rows carry most of the product's weight. `plan_edit`'s two are the stages a viewer
+would actually describe as "edited"; everything above them is framing and everything below
+is decoration.
 
-Because the spec is already Pydantic, LLM stages return validated spec fragments
-directly:
+### 7.2 Schema in, validated fragment out
 
-```python
-response = client.messages.parse(
-    model="claude-opus-5",
-    max_tokens=16000,
-    thinking={"type": "adaptive"},
-    messages=[...],
-    output_format=OverlayPlan,   # a Pydantic model from spec/
-)
-plan = response.parsed_output    # a validated OverlayPlan
+The spec is Pydantic, so every LLM stage is the same shape: emit the JSON Schema for the
+target fragment into the prompt, run the agent, parse stdout, validate against the model
+that produced the schema.
+
+```
+prompt  = system + constraints.yaml + exemplars + json_schema(OverlayPlan) + job content
+stdout  = hoocode -p --mode json ...
+fragment = OverlayPlan.model_validate_json(extract_result(stdout))
 ```
 
-One definition constrains the model's output, validates it, generates the review UI's
-TypeScript types, and defines what the learner diffs. A model that cannot emit an invalid
-overlay anchor is worth more than any amount of prompt engineering telling it not to.
+One definition still does four jobs — it constrains what the prompt asks for, validates
+what comes back, generates the review UI's TypeScript types, and defines what the learner
+diffs.
 
-Adaptive thinking is the default; `output_config.effort` is tuned per stage — higher for
-script drafting, lower for overlay placement. Stages with long output stream and use
-`.get_final_message()`.
+**The honest cost of decision #13** is that the schema is now a strong instruction rather
+than a decoding constraint: the agent *can* return something invalid, where a
+constrained-decoding API could not. The mitigation is three lines of control flow, not a
+subsystem — validate, retry once with the validation error appended, then degrade per
+§7.4. Since §7.4 already mandates that degradation path for every stage, an invalid
+fragment costs one extra round trip and lands somewhere the design already handles.
 
-### 7.3 Prompt caching
+What is genuinely given up alongside it: provider-side prompt caching and batch
+submission. For one person running one job at a time, both were cost optimizations on an
+already-negligible bill.
 
-The stable prefix is: system prompt, `constraints.yaml`, and the retrieved exemplar set.
-Per-job content (the transcript, the `FocusTrack` summary) goes after the last cache
-breakpoint. Confirm it is working by asserting `usage.cache_read_input_tokens` is nonzero
-across repeated runs — a silent invalidator (a timestamp, unsorted JSON, a varying tool
-list) shows up as a cost regression and nothing else.
+### 7.3 Running an agent as a pipeline stage
+
+A coding agent is built to explore and modify a repository. As a pipeline stage it must do
+neither, and the invocation has to enforce that rather than request it:
+
+- **Print mode, JSON events** — `-p --mode json`, so output is parseable and the process
+  exits rather than waiting on a terminal.
+- **Tools off, read-only mode.** A stage that plans captions has no business holding
+  `write`, `edit`, or `bash`. hoocode's mode config (`enabled_tools`,
+  `allowed_write_paths`) is where this is pinned.
+- **Fixed cwd**, pointed at the job directory and nothing above it.
+- **Everything the stage needs is in the prompt**, because with tools off there is no
+  second way to get it.
+
+This is a narrower thing than the agent is capable of, deliberately. The agent's full
+range is for *building* screencut, which is a different activity from *running* it.
 
 ### 7.4 Failure handling
 
-An LLM stage failure must not fail the job. Each degrades to a deterministic default —
-no overlays, no emphasis, script-derived metadata — and records the degradation in the
-job record so review shows it. Verification still runs.
+An LLM stage failure must not fail the job. Each degrades to a deterministic default and
+records the degradation in the job record so review shows it. Verification still runs.
 
-Check `stop_reason` before reading content; a refusal is an HTTP 200, not an exception.
-Enable server-side fallbacks (`fallbacks: "default"` with beta
-`server-side-fallback-2026-07-01`) so a classifier decline routes rather than drops the
-stage. Catch typed exceptions most-specific-first (`RateLimitError` before `APIStatusError`
-before `APIConnectionError`) rather than one broad class.
+| Stage | Degrades to |
+|---|---|
+| `plan_edit` — cuts | No cuts; the full take survives |
+| `plan_edit` — cleanup | No cleanup; verbatim transcript |
+| `script_draft` | Job halts — there is no script to fall back to |
+| Emphasis | No emphasis markers |
+| `plan_overlays` | No overlays |
+| Metadata sidecar | Script-derived title and description |
+
+Failure here means any of: nonzero exit, unparseable stdout, schema validation failing
+twice, or a timeout. Collapsing them into one "the stage did not produce a fragment"
+branch is deliberate — with a subprocess boundary there is no typed exception hierarchy to
+discriminate, and every one of these has the same correct response.
+
+The degradations are chosen so that a fully-degraded job still renders: the full take, the
+verbatim transcript, plain captions, no overlays. That is a worse video, not a failed one,
+and it is reviewable — which matters under decision #12, where degradation is discovered
+at review time rather than at a stage gate.
 
 ### 7.5 Golden-set replay
 
-Replaying the golden set (§11) through the LLM stages is a non-latency-sensitive batch
-workload — exactly what the Message Batches API is for, at half the cost.
+Replaying the golden set (§11) through the LLM stages is a batch of independent
+subprocesses with no shared state — parallelize across cores and rate-limit to whatever
+the configured provider tolerates. Nothing more sophisticated is warranted at this
+corpus size.
 
 ## 8. Review UI
 
@@ -329,6 +455,10 @@ Three layers. The first two exist to keep garbage from reaching a person.
   fully inside the profile's safe area
 - Overlay anchors inside safe area and not occluding a caption box
 - **Crop-path continuity** — no crop delta above `max_crop_delta_per_frame`
+- **Cut integrity** — every `EditDecisions` segment lies inside the source, segments do
+  not overlap or invert, and the retained total matches the rendered duration. This is
+  the arithmetic half of trusting §4.4: it cannot tell you a cut was tasteful, but it can
+  tell you the model did not hallucinate a segment that was never recorded.
 
 That last check earns its place: judder is *the* failure mode of automated vertical
 reframing, it is invisible in a still frame, and it is catchable with arithmetic.
@@ -339,10 +469,31 @@ Open-transcribe the rendered audio and diff against the script (§5.3). One chec
 catches TTS mispronunciation, audio/video desync, a wrong take, truncated narration, and
 captions that drifted — all otherwise invisible until a human watches.
 
+**§4.4 changes what this diff means, and the check has to know it.** Once `plan_edit`
+removes disfluencies and cuts segments, the rendered audio is *supposed* to differ from
+the raw transcript. Diffing against the raw transcript would flag every successful edit as
+a failure, and a check that fires on correct behaviour gets ignored within a week.
+
+So the diff runs against the **post-`plan_edit` expected transcript** — the script as the
+spec says it should sound after cuts. Differences then fall into three classes:
+
+| Class | Meaning |
+|---|---|
+| Matches expected | Pass |
+| Removed range that `EditDecisions` accounts for | Expected — the edit worked |
+| Anything else | Real failure — mispronunciation, desync, truncation, a cut that landed wrong |
+
+The third class is what this check exists for, and it now also catches a failure mode that
+did not previously exist: a cut applied at the wrong instant, which clips a word. That is
+invisible in a still frame and audible immediately.
+
 ### 9.3 Perceptual
 
 A VLM over sampled frames, only for questions text cannot answer: is a caption sitting on
 the UI element it describes, is the zoom framing the cursor or empty space.
+
+This goes through the same seam as every other model stage — the agent CLI accepts image
+paths in print mode, so §7.3's invocation covers it with no new mechanism.
 
 ## 10. Preference learning
 
@@ -354,7 +505,8 @@ Fonts, forbidden voices, fixed output dimensions.
 
 **Learned numeric defaults** (`prefs/defaults.json`) — per render profile. Rolling median
 over accepted specs for every tunable in §4.3 plus caption geometry, music level, and cut
-pacing. Plain statistics. Given decision #5, this tier does most of the work.
+pacing (now a real quantity — the retained-fraction and segment-length distribution over
+§4.4's `cuts`). Plain statistics. Given decision #5, this tier does most of the work.
 
 **Exemplars** (`prefs/exemplars/`) — accepted specs retrieved by similarity and few-shot
 into the LLM stages. Only relevant to §7.1's model-using stages.
@@ -402,7 +554,7 @@ screencut/
   prefs/        constraints.yaml, defaults.json, exemplars/
   review/       FastAPI + web UI
   golden/       Fixtures, approved specs, replay harness
-  runner/       LocalRunner, cache index, SQLite schema + migrations
+  runner/       LocalRunner, agent-CLI adapter, cache index, SQLite schema + migrations
   docs/
 data/           gitignored — per-job directories and screencut.db (§5.4)
 ```
@@ -433,13 +585,45 @@ time, the next lever is a gate on `plan_overlays` specifically, not on the whole
 **R3 — Learner drift.** Addressed by §10.1 and §11; listed here because it is the failure
 mode most likely to be noticed late.
 
+**R4 — Cut quality is the product, and it is unproven.** §4.4 makes a model responsible
+for the most consequential decision a viewer perceives. Unlike zoom (arithmetic, §4.3) or
+captions (derived, §6.2), there is no deterministic fallback that is *good* — §7.4's
+fallback is "keep everything", which is exactly the unedited take this project exists to
+avoid.
+
+*Mitigation:* `plan_edit` lands early (phase 5) rather than late, precisely so a bad
+answer is discovered while it is still cheap to change the approach. §9.1's cut-integrity
+check bounds the damage to "wrong taste" rather than "invalid spec". Cuts are ordinary
+spec fields, so a bad one is a review-UI edit rather than a re-run. If taste turns out to
+be the problem, the levers in order are: exemplars (§10), then a stage gate on `plan_edit`
+specifically, then narrowing its remit to silence-trimming and leaving substantive cuts
+manual.
+
+**R5 — No constrained decoding.** Decision #13 trades a schema guarantee for a schema
+instruction (§7.2). The plausible failure is not a wild response but a subtly wrong one —
+plausible JSON that validates and is still wrong, which is a class no interface prevents.
+
+*Mitigation:* keep fragments small and heavily typed, so there is little room between
+"validates" and "correct". Normalized coordinates, enum template names, and timing ranges
+bounded by source duration mean most wrong answers are *invalid* answers, caught at
+§7.2's validation or §9.1's checks. This is the real reason principle 2 forbids the model
+from emitting pixels or FFmpeg arguments: not that it would render badly, but that
+nothing downstream could tell.
+
 ## 15. Open questions
 
 - Review UI across profiles: one job with a shared `EditSpec` and per-profile caption
   geometry, or two independent approvals? Current lean is one job, since most corrections
   apply to the shared spec.
-- Music beds: templates generate visual overlays, but audio beds still need a source.
 - Whether `still_4x5` is worth a distinct profile or whether stills reuse `shorts_9x16`.
+- Whether `plan_edit`'s two halves — cuts and cleanup — are one stage or two. One stage
+  sees the whole picture and decides once; two cache and degrade independently, so a bad
+  cut decision does not cost you a clean transcript. Current lean is one stage emitting
+  one `EditDecisions` fragment, revisited if phase 5 shows the two failing separately.
+- Music beds still need a source. Templates generate visual overlays; audio has no
+  equivalent, and under §1.1 the obvious shortcut — generating one — is closed. A licensed
+  track is a source like any other, so this is a procurement question rather than a design
+  one, but it is the one place where "no generated media" and "no source to hand" collide.
 
 ## 16. Platform notes — Apple Silicon
 
