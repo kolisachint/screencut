@@ -70,7 +70,7 @@ Recorded so future-us knows what was chosen deliberately versus what merely happ
 | 14 | Captions | Plain blocks first, kinetic later | Spec carries word timings from day one; only the compiler changes later. See §6.2. |
 | 15 | Review UX | Form + re-render; overlay preview later | Puts the whole weight on the stage cache. See §8. |
 | 16 | State | SQLite + files on disk | Media in per-job directories, records and cache index in SQLite. See §5.4. |
-| 17 | Hardware | Apple Silicon | ASR backend must be swappable; cache becomes load-bearing; VideoToolbox for encode. See §16. |
+| 17 | Hardware | M1 MacBook Air, 8GB, fanless | 8GB is the ceiling: one model resident at a time, local stages serialized. ASR backend swappable; VideoToolbox for encode. See §16. |
 | 18 | Content origin | Every frame is captured, never synthesized | No image, video, or B-roll model exists in this design. See §1.1. |
 | 19 | Editorial decisions | Arithmetic proposes, the model reviews and tiers | `trim` is deterministic; `plan_edit` overrides it and ranks. Gives §7.4 a decent floor. See §4.4. |
 | 20 | Voice | F5-TTS cloned from your own reference audio | Performance substitution, not content generation — the one synthesis this design allows, and only of you. See §1.1. |
@@ -320,6 +320,15 @@ mechanism to maintain. See §7.3.
 Content-addressed, keyed on `(stage_name, input_hash, params_hash)`. Non-negotiable — see
 principle 4.
 
+**Retention.** Content-addressed and nothing evicts it is the right default on a large
+disk and the wrong one on 256GB (§16). Every correction cycle in review writes another set
+of stage artifacts, and the media ones are the large ones. The policy when the disk first
+complains: artifacts reachable from a job's current spec are kept, superseded artifacts are
+evicted oldest-first and re-derived if ever wanted again, and job media and `accepted_specs`
+are never touched — they are inputs and corpus, not cache. Nothing needs building now; the
+design only has to make it possible, which content-addressing plus the `stage_cache` table
+already does.
+
 For LLM stages, `params_hash` **must include the model identifier and a prompt version**.
 The same transcript under a different model, or under a revised prompt, is a different
 artifact; a key that omits them serves a stale result after exactly the change you were
@@ -546,6 +555,10 @@ Replaying the golden set (§11) through the LLM stages is a batch of independent
 subprocesses with no shared state — parallelize across cores and rate-limit to whatever
 the configured provider tolerates. Nothing more sophisticated is warranted at this
 corpus size.
+
+This parallelism is specific to the model stages, and it is safe precisely because they
+hold no local weights. Local-inference stages are serialized on this machine (§16), so a
+replay that includes them is a different, slower shape of job.
 
 ## 8. Review UI
 
@@ -789,10 +802,40 @@ nothing downstream could tell.
   track is a source like any other, so this is a procurement question rather than a design
   one, but it is the one place where "no generated media" and "no source to hand" collide.
 
-## 16. Platform notes — Apple Silicon
+## 16. Platform notes — M1 MacBook Air, 8GB
 
-The target machine is Apple Silicon. Three consequences, all of which want verifying in
-phase 0 rather than trusting this document.
+The target machine is a base-model M1 MacBook Air: 8-core CPU (4 performance, 4
+efficiency), 7-core GPU, **8GB of unified memory**, a 256GB SSD, and **no fan**.
+
+On Apple Silicon in general the interesting question is MPS op coverage. On *this*
+machine the questions are memory and heat, and they constrain different decisions.
+Everything below still wants measuring in phase 0 — the point of naming the machine is
+that the measurements now have a known subject.
+
+**Memory is the ceiling, and it is shared.** 8GB is unified across CPU and GPU, with the
+OS and whatever else is open already inside it. Two models resident at once is the failure
+mode to design against rather than tune away later:
+
+- Whisper large-v3 is 1.55B parameters — order 3GB at fp16, under 2GB quantized to int8.
+  It fits alone. It does not fit alongside much.
+- F5-TTS Base is a few hundred million parameters, order 1.3GB at fp32. **Capacity is
+  probably not what stops it**; speed and MPS op coverage still might.
+- WhisperX's wav2vec2 alignment model is small enough not to enter the argument.
+
+Two consequences, and the first is a code decision rather than a note. `LocalRunner` runs
+local-inference stages **one at a time** — the parallelism §7.5 licenses is for agent
+subprocesses, which are network-bound and hold no local weights. That is a point in
+decision #13's favour which only becomes visible on this machine: the model stages are the
+ones that cost nothing here. Second, ASR model size is a real choice with a measured
+answer rather than a default: `medium` may well beat `large-v3` once swap is counted, and
+phase 0 measures that instead of assuming it.
+
+Under memory pressure macOS swaps to the SSD, which is both a speed cliff and write wear
+on a 256GB drive. Serializing local inference is what avoids it.
+
+**Fanless means sustained work throttles.** A thirty-second sample measures burst speed,
+not the speed that governs a five-minute job. Phase 0's timings should say which one they
+are, and the number that matters for the review loop is the sustained one.
 
 **The transcription backend must be swappable.** WhisperX's default backend is
 faster-whisper, which is built on CTranslate2 — and CTranslate2 has no Metal/MPS backend,
@@ -807,14 +850,18 @@ has the CTranslate2 problem. They can be sourced independently.
 **F5-TTS on MPS is the open question.** It is PyTorch, so it should run, but op coverage
 under MPS varies and unsupported ops either fail or fall back to CPU
 (`PYTORCH_ENABLE_MPS_FALLBACK=1`) at a speed cost. This is the single most likely reason
-to end up wanting a remote GPU — which is what §5.1's `Runner` exists to absorb. Phase 0
-answers it.
+to end up wanting a remote GPU — which is what §5.1's `Runner` exists to absorb. On 8GB
+the fallback is worse than it sounds, because a CPU fallback is also a second copy of the
+tensors. Phase 0 answers it.
 
 **Use VideoToolbox for encode.** FFmpeg's `h264_videotoolbox` / `hevc_videotoolbox`
-hardware encoders are a straightforward render-time win on macOS. Keep a software-encode
-path for the golden set, though: hardware encoders are not bit-reproducible across
-machines or OS versions, and §11's frame hashing needs determinism.
+hardware encoders run on the M1's media engine, which is a straightforward render-time win
+and — on a fanless machine — a thermal one, since it leaves the CPU cores alone. Keep a
+software-encode path for the golden set, though: hardware encoders are not bit-reproducible
+across machines or OS versions, and §11's frame hashing needs determinism. Expect the
+golden renders to be the slow part of any full replay, and keep the set small enough that
+this stays acceptable.
 
 **The cache stops being an optimization.** Slower local inference means the difference
 between a cached and uncached correction cycle is the difference between a usable review
-loop and an abandoned one.
+loop and an abandoned one. On 256GB it also acquires a retention policy — see §5.2.

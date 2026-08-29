@@ -8,6 +8,7 @@ from spec import (
     SHORTS_9X16,
     AudioTrack,
     CaptionStyle,
+    EncodeSettings,
     Encoder,
     FocusMode,
     Narration,
@@ -115,3 +116,15 @@ def test_ducking_lowers_the_bed():
 def test_a_rect_that_runs_off_the_frame_is_rejected():
     with pytest.raises(ValidationError, match="runs off the frame"):
         Rect(x=0.8, y=0.1, w=0.5, h=0.1)
+
+
+def test_quality_is_expressed_once_per_encode_path():
+    """`crf` cannot steer VideoToolbox and `quality` cannot steer x264. On the target
+    machine the hardware encoder is the default, so a lone `crf` would control nothing."""
+    encode = DEMO_16X9.encode
+    assert encode.encoder is Encoder.VIDEOTOOLBOX and 1 <= encode.quality <= 100
+    assert 0 <= encode.crf <= 51
+    with pytest.raises(ValidationError):
+        EncodeSettings(quality=0)
+    with pytest.raises(ValidationError):
+        EncodeSettings(crf=99)

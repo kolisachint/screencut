@@ -19,10 +19,11 @@ anywhere in this design, and adding one would replace it rather than extend it.
 written against, its invariants, its versioning, its generated schemas and types,
 and a synthetic fixture to write the compiler against.
 
-Phase 0 is an environment spike on the target machine (Apple Silicon) and has not
-been run; it is the phase that answers whether cursor events are extractable
-(risk R1) and whether F5-TTS is viable locally. Nothing in phase 1 depends on
-those answers, which is why it could go first.
+Phase 0 is an environment spike on the target machine — a base-model M1 MacBook
+Air, 8GB, fanless — and has not been run. It answers whether cursor events are
+extractable (risk R1), whether F5-TTS is viable locally, and what each stage
+costs in memory, which on 8GB is the number that decides the rest. Nothing in
+phase 1 depends on those answers, which is why it could go first.
 
 Next is phase 2 — `plan_focus`, the FFmpeg compiler and the time projection.
 
@@ -79,3 +80,8 @@ Four things in the spec are load-bearing and easy to miss:
 ## Requirements
 
 Python 3.11+, `ffmpeg` for fixture media, Node only for `make typecheck`.
+
+The target machine is a base-model M1 MacBook Air (8GB, fanless). That is not a
+build requirement — phase 1 is portable Python — but it is what the encode
+defaults, the ASR backend choice and the "one model resident at a time" rule in
+[§16](docs/architecture.md) are written for.

@@ -158,6 +158,14 @@ export interface EditSpec {
   audio: AudioTrack;
 }
 
+/**
+ * Encode settings for both paths, because both are used. Quality is expressed twice on
+ * purpose. `crf` and `preset` are x264's scales and govern the software path;
+ * `quality` is VideoToolbox's and governs the hardware one. They are not convertible,
+ * so a single knob would have to lie about one encoder — and on the target machine
+ * (§16) the hardware encoder is the default, which is the path a lone `crf` would
+ * silently fail to control. `compile` reads whichever pair matches `encoder`.
+ */
 export interface EncodeSettings {
   /**
    * @producedBy config (deterministic)
@@ -168,13 +176,24 @@ export interface EncodeSettings {
    */
   video_codec: string;
   /**
+   * Software path only (x264): lower is better.
+   *
    * @producedBy config (deterministic)
    */
   crf: number;
   /**
+   * Software path only (x264).
+   *
    * @producedBy config (deterministic)
    */
   preset: string;
+  /**
+   * Hardware path only (VideoToolbox `-q:v`): higher is better. Phase 2 confirms the
+   * range against the installed FFmpeg before relying on it.
+   *
+   * @producedBy config (deterministic)
+   */
+  quality: number;
   /**
    * @producedBy config (deterministic)
    */

@@ -30,18 +30,33 @@ finished, and what is deliberately excluded.
 
 **Goal:** replace assumptions with facts before any of them is load-bearing.
 
-Not a coding phase. Half a day of finding out whether the stack works on this machine.
+Not a coding phase. Half a day of finding out whether the stack works on this machine —
+a base-model M1 MacBook Air, 8GB, fanless (`architecture.md` §16). Two things follow for
+how the measuring is done: **record peak memory alongside every timing**, because on 8GB
+the number that decides a design is resident size rather than seconds; and **say whether a
+timing is burst or sustained**, because a fanless machine gives two different answers and
+only the sustained one governs a real job.
 
 **Build**
 
 - Record a real take with Cap (and/or Screenize) and try to extract cursor + click events.
   Document the actual format, sample rate, and coordinate space.
 - Run each candidate ASR backend on a sample: `mlx-whisper`, `whisper.cpp`, and
-  faster-whisper. Time them. Confirm the CTranslate2/MPS situation firsthand.
+  faster-whisper. Time them and record peak RSS. Confirm the CTranslate2/MPS situation
+  firsthand. Do it at more than one model size — `large-v3` against `medium` — since on
+  8GB the smaller model winning on wall-clock is a live possibility rather than a
+  consolation prize.
 - Run WhisperX's wav2vec2 alignment model under MPS. Confirm it works and time it.
 - Install F5-TTS and synthesize thirty seconds. Note whether MPS works, whether
-  `PYTORCH_ENABLE_MPS_FALLBACK=1` is needed, and how long it takes.
-- Confirm `h264_videotoolbox` is available in the installed FFmpeg.
+  `PYTORCH_ENABLE_MPS_FALLBACK=1` is needed, how long it takes, and peak memory. A CPU
+  fallback on 8GB is also a second copy of the tensors, so the memory number is as much
+  the verdict as the timing is.
+- Transcribe and synthesize back to back in one process and watch for swap. This is the
+  cheapest possible test of the §16 claim that stages must be serialized, and it is worth
+  knowing before `LocalRunner` is written rather than after.
+- Confirm `h264_videotoolbox` is available in the installed FFmpeg, and time a one-minute
+  1080p encode both ways — hardware and `libx264` — since the software path is what the
+  golden set pays for on every replay.
 - Install hoocode and confirm the stage invocation from `architecture.md` §7.3 works:
   `-p --mode json`, tools disabled, a JSON Schema in the prompt, and a schema-valid
   fragment parsed back out of stdout. Do it once by hand with a throwaway schema. Note
@@ -58,6 +73,10 @@ Not a coding phase. Half a day of finding out whether the stack works on this ma
 - **Does the agent CLI round-trip a schema reliably?** This is risk R5. A "mostly" is the
   expected answer and is fine — §7.2's validate-retry-degrade handles it. A "no" means
   reopening decision #13 before phase 5 depends on it.
+- **What is the memory budget per stage?** The 8GB ceiling decides the ASR model size that
+  goes into `constraints.yaml` and confirms whether local stages have to be serialized. A
+  measured peak-RSS figure per stage is the deliverable; "it seemed fine" is not, because
+  the failure mode is swap rather than a crash and swap looks like slowness.
 
 **Not in this phase:** any pipeline code.
 
@@ -147,7 +166,10 @@ phase 2 onward, which is the manual escape hatch for any job the model gets wron
 
 - Stage contract: `(inputs, params) -> artifact` as a CLI taking JSON on stdin.
 - `LocalRunner` (subprocess). Define the `Runner` interface such that `RemoteRunner` is a
-  drop-in; do not build it.
+  drop-in; do not build it. Local-inference stages run **one at a time** — 8GB will not
+  hold two models, and a runner that discovers this by swapping is a runner that looks
+  merely slow (`architecture.md` §16). Stages that hold no local weights, the agent-CLI
+  ones included, are exempt.
 - Content-addressed cache keyed on `(stage_name, input_hash, params_hash)`, with
   `stage_version` in the key — and, for model stages, the model identifier and prompt
   version folded into `params_hash` (`architecture.md` §5.2). No model stage exists yet;
@@ -325,7 +347,9 @@ recorded input, not a default that can be quietly pointed at someone else.
 **Build**
 
 - `tts` stage: F5-TTS behind the CLI contract. If phase 0 said local is impractical, this
-  is where `RemoteRunner` gets built instead.
+  is where `RemoteRunner` gets built instead — and on a base-model M1 Air that is a real
+  branch rather than a formality, so read phase 0's memory and sustained-speed numbers
+  before starting rather than after.
 - `align` stage: WhisperX **forced alignment** against the known script text — a different
   mode from phase 4's open transcription (`architecture.md` §5.3).
 - Script as an optional job input; music bed mixing and ducking against synthesized narration.

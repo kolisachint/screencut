@@ -72,6 +72,7 @@
     },
     "EncodeSettings": {
       "additionalProperties": false,
+      "description": "Encode settings for both paths, because both are used.\n\nQuality is expressed twice on purpose. `crf` and `preset` are x264's scales and\ngovern the software path; `quality` is VideoToolbox's and governs the hardware\none. They are not convertible, so a single knob would have to lie about one\nencoder \u2014 and on the target machine (\u00a716) the hardware encoder is the default,\nwhich is the path a lone `crf` would silently fail to control. `compile` reads\nwhichever pair matches `encoder`.",
       "properties": {
         "audio_bitrate_kbps": {
           "default": 192,
@@ -94,6 +95,7 @@
         },
         "crf": {
           "default": 20,
+          "description": "Software path only (x264): lower is better.",
           "maximum": 51,
           "minimum": 0,
           "title": "Crf",
@@ -122,8 +124,21 @@
         },
         "preset": {
           "default": "medium",
+          "description": "Software path only (x264).",
           "title": "Preset",
           "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "quality": {
+          "default": 60,
+          "description": "Hardware path only (VideoToolbox `-q:v`): higher is better. Phase 2 confirms the range against the installed FFmpeg before relying on it.",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Quality",
+          "type": "integer",
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"

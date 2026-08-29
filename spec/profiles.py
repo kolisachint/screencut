@@ -100,10 +100,32 @@ class FocusProjection(SpecModel):
 
 
 class EncodeSettings(SpecModel):
+    """Encode settings for both paths, because both are used.
+
+    Quality is expressed twice on purpose. `crf` and `preset` are x264's scales and
+    govern the software path; `quality` is VideoToolbox's and governs the hardware
+    one. They are not convertible, so a single knob would have to lie about one
+    encoder — and on the target machine (§16) the hardware encoder is the default,
+    which is the path a lone `crf` would silently fail to control. `compile` reads
+    whichever pair matches `encoder`.
+    """
+
     encoder: Encoder = spec_field(default=Encoder.VIDEOTOOLBOX, produced_by=Stage.CONFIG)
     video_codec: str = spec_field(default="h264", produced_by=Stage.CONFIG)
-    crf: Annotated[int, Field(ge=0, le=51)] = spec_field(default=20, produced_by=Stage.CONFIG)
-    preset: str = spec_field(default="medium", produced_by=Stage.CONFIG)
+    crf: Annotated[int, Field(ge=0, le=51)] = spec_field(
+        default=20, produced_by=Stage.CONFIG, description="Software path only (x264): lower is better."
+    )
+    preset: str = spec_field(
+        default="medium", produced_by=Stage.CONFIG, description="Software path only (x264)."
+    )
+    quality: Annotated[int, Field(ge=1, le=100)] = spec_field(
+        default=60,
+        produced_by=Stage.CONFIG,
+        description=(
+            "Hardware path only (VideoToolbox `-q:v`): higher is better. Phase 2 confirms the "
+            "range against the installed FFmpeg before relying on it."
+        ),
+    )
     pix_fmt: str = spec_field(default="yuv420p", produced_by=Stage.CONFIG)
     audio_codec: str = spec_field(default="aac", produced_by=Stage.CONFIG)
     audio_bitrate_kbps: Annotated[int, Field(gt=0)] = spec_field(default=192, produced_by=Stage.CONFIG)
