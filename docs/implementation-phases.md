@@ -415,6 +415,7 @@ Unordered. Pull them in when the need is felt, not on a schedule.
 | **MLT export and re-ingest** | The first time you want Kdenlive for something the spec cannot express. |
 | **`still_4x5` profile** | When photo posts are actually being made; may turn out that `shorts_9x16` suffices. |
 | **`RemoteRunner`** | When local inference becomes the bottleneck, or phase 0/8 forces it earlier. |
+| **Multi-take assembly** | When re-recording a section and stitching it in is something you actually want (decision #24). A `source_id` on `removals` and `segments`, plus a compiler that concatenates across takes — a schema migration and a compiler change, not a redesign. |
 
 ---
 

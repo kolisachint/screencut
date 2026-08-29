@@ -75,6 +75,7 @@ Recorded so future-us knows what was chosen deliberately versus what merely happ
 | 21 | Cuts vs aspect | Segments tiered once, selected per profile by duration budget | Keeps cuts aspect-agnostic without claiming two aspects want the same edit. See §4.4.1. |
 | 22 | Edit application | `EditDecisions` is projected at compile, never baked into the spec | Everything stays in source time; a cut correction costs a re-render, not a re-plan. See §4.5. |
 | 23 | Golden replay | Checked by field origin — strict deterministic, distributional model | One tolerance cannot serve both without becoming useless for the strict half. See §11.1. |
+| 24 | Sources | One recording per job | Multi-take assembly is a schema *and* compiler change; §4.2 absorbs it if wanted. See §4.1. |
 
 ## 3. Principles
 
@@ -99,11 +100,18 @@ that gets enforced in code rather than asserted in prose.
 
 Producing 9:16, 16:9 and stills from one source makes a single flat spec impossible.
 
-**`EditSpec`** — aspect-agnostic. Sources, in/out points, `FocusTrack`, narration
+**`EditSpec`** — aspect-agnostic. **One source**, `EditDecisions`, `FocusTrack`, narration
 segments with word timings, emphasis markers, overlay intents, audio levels. All spatial
 values normalized to `0.0–1.0` in source coordinates. All temporal values in seconds
 from source start. **No pixels anywhere.** This is what the planner produces, what the
 review UI edits, and what the learner diffs.
+
+One source, singular and deliberate (decision #24). A job is one take. Assembling several
+takes is a real editing operation and a plausible future want, but it is a schema field
+*and* a compiler change, and it is not needed to find out whether any of the rest of this
+works. §4.2's migration registry is what makes adding it later ordinary rather than
+alarming — the same reasoning R1 applies to the recorder: build on the floor, extend when
+the floor turns out to be higher.
 
 **`RenderProfile`** — `shorts_9x16`, `demo_16x9`, `still_4x5`. Resolution, framerate,
 safe-area insets, caption box geometry and type scale, encode settings, a
@@ -232,6 +240,18 @@ Three things fall out, and the third is the reason this matters:
 The cost is that `plan_overlays` sees material that will later be cut and may waste an
 overlay on it. Compile drops it deterministically. A wasted overlay is worth a stage
 dependency removed.
+
+**There is no second time base, and there was nearly one.** Some elements are laid over
+the *output* rather than derived from the source — a music bed, a progress pill (§6.3) —
+and they look like they need output-relative timing, which would put an exception into an
+invariant the whole design now leans on.
+
+They do not. Anything spanning the whole output needs no anchor at all: the bed plays from
+zero to the end of whatever compile produced, and the pill's value is computed from output
+duration at compile. Anything positioned at a *moment* is positioned relative to content,
+which is a source-time anchor that compile maps like every other. The invariant holds
+without a carve-out: **`EditSpec` is source-anchored, without exception, and
+output-relative behaviour is derived at compile from the projection.**
 
 ### 4.6 Deterministic trim tunables
 
