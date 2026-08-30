@@ -3,8 +3,9 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phases 1 to 3 are built, and phase 6's deterministic layer with them; phase 0 is a spike on
-the target machine and has not been run. Phases
+Phase 0 has been run and phases 1 to 3 are built, with phase 6's deterministic layer among
+them. Its measured results are in [`environment-findings.md`](environment-findings.md), and
+phases 4, 5 and 8 should be read alongside it. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
 
@@ -27,9 +28,12 @@ finished, and what is deliberately excluded.
 
 ---
 
-## Phase 0 — Environment spike
+## Phase 0 — Environment spike — **run**
 
 **Goal:** replace assumptions with facts before any of them is load-bearing.
+
+**Results: [`environment-findings.md`](environment-findings.md)**, with raw measurements
+under `docs/measurements/` and the harness in `tools/`.
 
 Not a coding phase. Half a day of finding out whether the stack works on this machine —
 a base-model M1 MacBook Air, 8GB, fanless (`architecture.md` §16). Two things follow for
@@ -80,6 +84,41 @@ only the sustained one governs a real job.
   the failure mode is swap rather than a crash and swap looks like slowness.
 
 **Not in this phase:** any pipeline code.
+
+**How it came out.** Three of the four verdicts landed where the design hoped and the
+fourth did not, which is roughly the intended yield of a spike.
+
+**The measurement itself was nearly wrong.** Resident set size does not see MLX's
+unified-memory allocations: mlx-whisper on `large-v3` polls at 1.3GB RSS against a 5.7GB
+`phys_footprint`, a factor of 4.3. Since this phase exists because the failure mode is swap
+rather than a crash, a budget built on RSS would have been built on half the truth — and it
+would have picked the wrong ASR model while looking careful. The harness now wraps every
+child in `/usr/bin/time -l` and reports both numbers. The tell was a nonsense result: the
+"both models resident" case appeared to use *less* memory than running them one at a time.
+
+**R1 came back better than assumed.** Cap writes cursor positions already normalized to
+0..1 — `FocusTrack`'s own space — so the adapter needs no pixel conversion. But it samples
+on movement, not on a clock: a resting cursor emits nothing for up to two seconds. That
+turns the known dwell trap into something sharper, since dwell is not mismeasured so much
+as invisible. Clicks carry no position at all, and cursor time runs on the recording clock
+rather than the video's.
+
+**F5-TTS is the "no".** 0.11x realtime on MPS and only for single-batch text; the chunked
+path segfaults. CPU completes but takes ten minutes per thirty seconds of audio. Phase 8
+starts with `RemoteRunner`, exactly as this phase's text anticipated.
+
+**The toolchain fought back harder than any of the four questions.** Homebrew's `ffmpeg` no
+longer depends on libass, so the repository's own phase-2 render could not run on the
+target machine at all until `ffmpeg-full` was installed. That is worth knowing before
+someone concludes the compiler is broken.
+
+**And installing it exposed a second break: FFmpeg 9 removed `-filter_complex_script`,**
+which `runner/stages.py` uses, so twenty tests fail with `Option not found`. The
+replacement `-/filter_complex` is verified working here but is not applied — this phase
+excludes pipeline code, and the swap needs a version guard since the new syntax predates
+neither FFmpeg 7 nor the old option's removal cleanly. **Phase 4 should fix this first.**
+On a clean macOS box today no single FFmpeg has both libass and
+`-filter_complex_script`, so this is not optional maintenance.
 
 ---
 

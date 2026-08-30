@@ -24,15 +24,22 @@ rendering one spec to two aspect ratios at two different lengths; the runner tha
 makes re-running cheap; and verification that reads the render back and reports
 what is wrong with it.
 
-Phase 0 is an environment spike on the target machine — a base-model M1 MacBook
-Air, 8GB, fanless — and has not been run. It answers whether cursor events are
-extractable (risk R1), whether F5-TTS is viable locally, and what each stage
-costs in memory, which on 8GB is the number that decides the rest. Nothing in
-phase 1 depends on those answers, which is why it could go first.
+**Phase 0 has been run** on the target machine — a base-model M1 MacBook Air,
+8GB, fanless. Its four verdicts are in
+[`docs/environment-findings.md`](docs/environment-findings.md), with the raw
+numbers under `docs/measurements/` and the harness in `tools/`:
+
+- **Cursor events are extractable** (risk R1 closed), and Cap already writes them
+  in normalized coordinates — `FocusTrack`'s own space.
+- **ASR: `whisper.cpp`,** `large-v3` at 1.95x realtime and 3 984 MB, `medium` as
+  the fallback. All three candidates emit the word-level timings §6.2 needs.
+- **F5-TTS is not viable locally** — 0.11x realtime at best. Phase 8 starts with
+  `RemoteRunner`.
+- **The agent CLI round-trips a schema** — 12/12 valid, though 11/12 arrive
+  wrapped in a code fence, and latency runs 6–66 s per call.
 
 Next is phase 4 — real ingest and transcription, and the first output worth
-posting. It needs the target machine: a real recording to write the recorder
-adapter against, and an ASR backend to pick.
+posting. Both of the things it was waiting on now exist.
 
 ## Quickstart
 
@@ -96,8 +103,15 @@ Four things in the spec are load-bearing and easy to miss:
 
 ## Requirements
 
-Python 3.11+, `ffmpeg` (with libass and a font installed) for anything that
+Python 3.11+, `ffmpeg` **with libass** and a font installed for anything that
 renders, and Node only for `make typecheck`.
+
+On macOS, `brew install ffmpeg` is no longer enough: the formula dropped its
+libass dependency, so it has no `ass` filter and cannot burn captions. Use
+`brew install ffmpeg-full` and put `/opt/homebrew/opt/ffmpeg-full/bin` first on
+`PATH` — it is keg-only. `cairosvg` also needs
+`DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` to find Homebrew's libcairo.
+Both are covered in the environment findings.
 
 The target machine is a base-model M1 MacBook Air (8GB, fanless). That is not a
 build requirement — phase 1 is portable Python — but it is what the encode

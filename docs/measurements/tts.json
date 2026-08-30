@@ -1,0 +1,110 @@
+{
+  "host": {
+    "cpu": "Apple M1",
+    "cores": "8",
+    "memory_gb": 8.0,
+    "os": "Darwin 27.0",
+    "arch": "arm64",
+    "python": "3.12.0",
+    "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "measured_at": "2026-08-30"
+  },
+  "verdict": {
+    "any_path_works": true,
+    "mps_works_single_batch": true,
+    "mps_works_multi_batch": false,
+    "cpu_works": true,
+    "needs_mps_fallback_env": false,
+    "best_realtime_factor": 0.11,
+    "best_peak_rss_mb": 1466.2,
+    "viable_locally": false
+  },
+  "attempts": [
+    {
+      "label": "mps/short",
+      "device": "mps",
+      "text": "short/single-batch",
+      "mps_fallback_env": "unset",
+      "exit_code": 0,
+      "wall_s": 63.62,
+      "peak_rss_mb": 1466.2,
+      "swap_delta_mb": 442.9,
+      "infer_s": 46.197,
+      "audio_s": 5.184,
+      "ok": true,
+      "clean_exit": true,
+      "realtime_factor": 0.11
+    },
+    {
+      "label": "mps+fallback/short",
+      "device": "mps",
+      "text": "short/single-batch",
+      "mps_fallback_env": "1",
+      "exit_code": 0,
+      "wall_s": 62.381,
+      "peak_rss_mb": 2041.4,
+      "swap_delta_mb": -6.1,
+      "infer_s": 47.221,
+      "audio_s": 5.184,
+      "ok": true,
+      "clean_exit": true,
+      "realtime_factor": 0.11
+    },
+    {
+      "label": "cpu/short",
+      "device": "cpu",
+      "text": "short/single-batch",
+      "mps_fallback_env": "1",
+      "exit_code": 0,
+      "wall_s": 126.17,
+      "peak_rss_mb": 2471.8,
+      "swap_delta_mb": -376.1,
+      "infer_s": 112.366,
+      "audio_s": 5.184,
+      "ok": true,
+      "clean_exit": true,
+      "realtime_factor": 0.05
+    },
+    {
+      "label": "mps/30s",
+      "device": "mps",
+      "text": "30s/multi-batch",
+      "mps_fallback_env": "unset",
+      "exit_code": -11,
+      "wall_s": 17.701,
+      "peak_rss_mb": 1899.0,
+      "swap_delta_mb": 653.8,
+      "ok": false,
+      "clean_exit": false,
+      "error": ".102.dylib (0x1479803a8) and /opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavdevice.63.1.101.dylib (0x14c0c0328). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.\nobjc[64609]: Class AVFAudioReceiver is implemented in both /Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/av/.dylibs/libavdevice.62.3.102.dylib (0x1479803f8) and /opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavdevice.63.1.101.dylib (0x14c0c0378). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.\n\n  0%|          | 0/3 [00:00<?, ?it/s]Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]\nPython runtime state: preinitialized"
+    },
+    {
+      "label": "mps+fallback/30s",
+      "device": "mps",
+      "text": "30s/multi-batch",
+      "mps_fallback_env": "1",
+      "exit_code": -11,
+      "wall_s": 20.926,
+      "peak_rss_mb": 1570.2,
+      "swap_delta_mb": -72.3,
+      "ok": false,
+      "clean_exit": false,
+      "error": ".102.dylib (0x16a6943a8) and /opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavdevice.63.1.101.dylib (0x16fd48328). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.\nobjc[64860]: Class AVFAudioReceiver is implemented in both /Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/av/.dylibs/libavdevice.62.3.102.dylib (0x16a6943f8) and /opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavdevice.63.1.101.dylib (0x16fd48378). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.\n\n  0%|          | 0/3 [00:00<?, ?it/s]Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]\nPython runtime state: preinitialized"
+    },
+    {
+      "label": "cpu/30s",
+      "device": "cpu",
+      "text": "30s/multi-batch",
+      "mps_fallback_env": "1",
+      "exit_code": 0,
+      "wall_s": 623.765,
+      "peak_rss_mb": 2554.8,
+      "swap_delta_mb": -1397.9,
+      "infer_s": 606.96,
+      "audio_s": 31.839,
+      "ok": true,
+      "clean_exit": true,
+      "realtime_factor": 0.05
+    }
+  ]
+}

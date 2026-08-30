@@ -1,0 +1,156 @@
+{
+  "host": {
+    "cpu": "Apple M1",
+    "cores": "8",
+    "memory_gb": 8.0,
+    "os": "Darwin 27.0",
+    "arch": "arm64",
+    "python": "3.12.0",
+    "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "measured_at": "2026-08-30"
+  },
+  "summary": {
+    "anthropic/claude-haiku-4-5": {
+      "trials": 6,
+      "valid": 6,
+      "parsed": 6,
+      "fenced": 6,
+      "burst_s": 47.777,
+      "sustained_s": 35.62,
+      "min_s": 19.5,
+      "max_s": 65.83
+    },
+    "anthropic/claude-sonnet-5": {
+      "trials": 6,
+      "valid": 6,
+      "parsed": 6,
+      "fenced": 5,
+      "burst_s": 12.023,
+      "sustained_s": 16.14,
+      "min_s": 5.73,
+      "max_s": 26.07
+    }
+  },
+  "trials": [
+    {
+      "trial": 0,
+      "model": "anthropic/claude-haiku-4-5",
+      "exit_code": 0,
+      "wall_s": 47.777,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 1,
+      "model": "anthropic/claude-haiku-4-5",
+      "exit_code": 0,
+      "wall_s": 65.832,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 2,
+      "model": "anthropic/claude-haiku-4-5",
+      "exit_code": 0,
+      "wall_s": 30.122,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 3,
+      "model": "anthropic/claude-haiku-4-5",
+      "exit_code": 0,
+      "wall_s": 35.619,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 4,
+      "model": "anthropic/claude-haiku-4-5",
+      "exit_code": 0,
+      "wall_s": 19.504,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 5,
+      "model": "anthropic/claude-haiku-4-5",
+      "exit_code": 0,
+      "wall_s": 50.893,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 0,
+      "model": "anthropic/claude-sonnet-5",
+      "exit_code": 0,
+      "wall_s": 12.023,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 1,
+      "model": "anthropic/claude-sonnet-5",
+      "exit_code": 0,
+      "wall_s": 5.727,
+      "fenced": false,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 2,
+      "model": "anthropic/claude-sonnet-5",
+      "exit_code": 0,
+      "wall_s": 26.075,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 3,
+      "model": "anthropic/claude-sonnet-5",
+      "exit_code": 0,
+      "wall_s": 19.051,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 4,
+      "model": "anthropic/claude-sonnet-5",
+      "exit_code": 0,
+      "wall_s": 12.517,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    },
+    {
+      "trial": 5,
+      "model": "anthropic/claude-sonnet-5",
+      "exit_code": 0,
+      "wall_s": 16.142,
+      "fenced": true,
+      "parsed": true,
+      "valid": true,
+      "error": ""
+    }
+  ]
+}
