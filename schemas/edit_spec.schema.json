@@ -642,7 +642,7 @@
     },
     "Word": {
       "additionalProperties": false,
-      "description": "One spoken word with its alignment window.\n\n`emphasis` is the only model-written field in the caption subtree (\u00a77.1:\nemphasis selection is taste, timing and layout are not) \u2014 which is exactly\nthe mixed-origin case \u00a711.1's per-field metadata exists for.",
+      "description": "One spoken word with its timing window.\n\n`emphasis` is the only model-written field in the caption subtree (\u00a77.1:\nemphasis selection is taste, timing and layout are not) \u2014 which is exactly\nthe mixed-origin case \u00a711.1's per-field metadata exists for.\n\nThe timings say `transcribe` because that is what writes them: \u00a75.3's *two*\nASR calls are two calls of the same thing, and open transcription of the\nrecording's own audio is the one that exists. `align` writes this same field\non the TTS path in phase 8, against a script it already knows. Both are\ndeterministic (`spec/origin.py`), so \u00a711.1 checks the field identically\nwhichever produced it \u2014 which is why one origin can be named honestly rather\nthan the field needing two.",
       "properties": {
         "emphasis": {
           "default": false,
@@ -659,7 +659,7 @@
           "type": "number",
           "x-screencut-origin": {
             "origin": "deterministic",
-            "stage": "align"
+            "stage": "transcribe"
           }
         },
         "t_out": {
@@ -668,7 +668,7 @@
           "type": "number",
           "x-screencut-origin": {
             "origin": "deterministic",
-            "stage": "align"
+            "stage": "transcribe"
           }
         },
         "text": {
@@ -677,7 +677,7 @@
           "type": "string",
           "x-screencut-origin": {
             "origin": "deterministic",
-            "stage": "align"
+            "stage": "transcribe"
           }
         }
       },

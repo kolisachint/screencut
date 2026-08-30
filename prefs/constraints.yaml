@@ -13,6 +13,37 @@ captions:
   # libass resolves this through fontconfig and substitutes if it is missing.
   font_family: Inter
 
+asr:
+  # Phase 0 ran all three candidates on the target machine at two sizes each and
+  # whisper.cpp won both (environment findings §3): fastest, and the only one
+  # whose footprint tracks its RSS, so the 8GB budget is predictable rather than
+  # discovered by swapping. `large-v3` is 1.95x realtime at 3 984 MB; `medium` is
+  # the documented fallback when memory is contended — 5x realtime for a WER cost
+  # that is real but small.
+  backend: whisper.cpp
+  model: large-v3
+  binary: whisper-cli
+  models_dir: ~/.cache/screencut/whisper
+  language: en
+
+trim:
+  # §4.6. Arithmetic proposes; plan_edit reviews (§7.1), so these can be a little
+  # eager without being the last word.
+  silence_db: -35
+  min_silence_ms: 600
+  keep_pad_ms: 120
+  # A closed list, and a deliberately short one. "so", "like", "right" and
+  # "actually" are fillers about half the time and ordinary words the other half;
+  # a list cannot tell which, and stripping every one of them mangles speech.
+  # Judging that is exactly what plan_edit is for, so the list stays unambiguous.
+  filler_words: [um, uh, erm, uhm, mmm, hmm]
+
+agent:
+  # Decision #13: model selection is a flag on a subprocess, so this is a config
+  # change and not a code change. Phase 0 measured 6-66s per call either way
+  # (environment findings §7).
+  model: anthropic/claude-sonnet-5
+
 voice:
   # Decision #20. Synthesis is permitted only of you, from a per-job reference
   # you explicitly recorded; the schema enforces the second half (spec/narration.py).

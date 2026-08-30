@@ -19,7 +19,9 @@ from compile.graph import ViewRect, clamp_to_safe_area, view_rects
 from compile.overlays import OverlayAsset
 from compile.timeline import EditedTimeline
 from plan.focus import CropPathPlan, FocusPlan
+from spec.edit import Removal
 from spec.editspec import EditSpec
+from spec.origin import Stage
 from spec.profiles import RenderProfile
 from spec.types import TIME_EPS, Rect
 
@@ -44,6 +46,7 @@ def verify_render(
     focus: FocusPlan,
     render: Path,
     assets: list[OverlayAsset] | None = None,
+    trim_proposals: list[Removal] | None = None,
 ) -> VerificationReport:
     findings: list[Finding] = []
     findings += check_render_integrity(timeline, render)
@@ -52,9 +55,9 @@ def verify_render(
     findings += check_captions(timeline, profile)
     findings += check_crop_continuity(focus, profile)
     findings += check_edit_integrity(spec, timeline)
-    findings += check_budget(timeline, profile)
+    findings += check_budget(timeline, profile, spec)
     findings += check_cuts_land_between_words(spec)
-    findings += check_trim_composition(spec)
+    findings += check_trim_composition(spec, trim_proposals)
     if assets is not None:
         findings += check_overlays(timeline, focus, profile, spec, assets)
     return VerificationReport(
@@ -321,10 +324,27 @@ def check_edit_integrity(spec: EditSpec, timeline: EditedTimeline) -> list[Findi
     return findings
 
 
-def check_budget(timeline: EditedTimeline, profile: RenderProfile) -> list[Finding]:
+def check_budget(
+    timeline: EditedTimeline, profile: RenderProfile, spec: EditSpec | None = None
+) -> list[Finding]:
     """`essential` alone overrunning is the expected way a profile fails (§4.4.1),
-    and it is reported with the overrun in seconds rather than rendering long."""
+    and it is reported with the overrun in seconds rather than rendering long.
+
+    Before anything has proposed an edit there is nothing to have cut *with*, and
+    a raw take meets a 15s budget only by luck. Reported then, but as a warning:
+    a check that fails on every correct job in a phase gets ignored within a week,
+    and phase 5's `trim` is the thing that answers it.
+    """
     if timeline.budget_overrun > TIME_EPS:
+        if spec is not None and not spec.edit.segments and not spec.edit.removals:
+            return [Finding(
+                check="budget", severity=Severity.WARN,
+                message=(
+                    f"the whole take runs {timeline.budget_overrun:.2f}s over the "
+                    f"{profile.duration_budget:g}s budget; nothing has proposed an edit yet"
+                ),
+                value=timeline.budget_overrun, limit=0.0,
+            )]
         return [_fail("budget",
                       f"{timeline.threshold.value} alone runs {timeline.budget_overrun:.2f}s over "
                       f"the {profile.duration_budget:g}s budget",
@@ -355,23 +375,40 @@ def check_cuts_land_between_words(spec: EditSpec) -> list[Finding]:
     return [_ok("cut_mid_word", "every cut lands between words")]
 
 
-def check_trim_composition(spec: EditSpec) -> list[Finding]:
-    """Not a verdict; a number on the report (§9.1).
+def check_trim_composition(
+    spec: EditSpec, proposals: list[Removal] | None = None
+) -> list[Finding]:
+    """Not a verdict; two numbers on the report (§9.1).
 
-    The true override rate needs `trim`'s proposal to compare against, which
-    arrives with phase 5. What is computable now is who proposed what — and a
-    model that stops keeping any of `trim`'s removals is worth seeing before the
-    learner starts averaging over it.
+    The composition — who proposed what survived — is computable from the spec
+    alone. The **override rate** needs `trim`'s original proposal to compare
+    against, and that is a stage artifact rather than a spec field, so it is
+    passed in when the verify stage can find it.
+
+    Both are worth seeing before the learner starts averaging over them. A
+    `plan_edit` that rejects nothing is not reviewing the arithmetic, and one that
+    rejects everything is not using it; §7.1 pays for the model precisely to sit
+    between those.
     """
     removals = spec.edit.removals
-    if not removals:
-        return []
-    from spec.origin import Stage
-
-    from_trim = sum(1 for r in removals if r.proposed_by is Stage.TRIM)
-    return [Finding(
-        check="trim_composition", severity=Severity.INFO,
-        message=f"{from_trim} of {len(removals)} removals came from trim, "
-                f"{len(removals) - from_trim} from plan_edit",
-        value=from_trim / len(removals),
-    )]
+    findings: list[Finding] = []
+    if removals:
+        from_trim = sum(1 for r in removals if r.proposed_by is Stage.TRIM)
+        findings.append(Finding(
+            check="trim_composition", severity=Severity.INFO,
+            message=f"{from_trim} of {len(removals)} removals came from trim, "
+                    f"{len(removals) - from_trim} from plan_edit",
+            value=from_trim / len(removals),
+        ))
+    if proposals:
+        kept = sum(
+            1 for p in proposals
+            if any(r.t_in < p.t_out - TIME_EPS and p.t_in < r.t_out - TIME_EPS for r in removals)
+        )
+        rejected = len(proposals) - kept
+        findings.append(Finding(
+            check="trim_override_rate", severity=Severity.INFO,
+            message=f"plan_edit rejected {rejected} of {len(proposals)} proposed removals",
+            value=rejected / len(proposals),
+        ))
+    return findings

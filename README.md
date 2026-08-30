@@ -17,12 +17,25 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 3 are built, plus §9.1's deterministic checks.** The data model
+**Phases 1 to 5 are built, plus §9.1's deterministic checks.** The data model
 everything else is written against; the compiler that turns it into video —
 `plan_focus`, the time projection, ASS captions, SVG overlays, an FFmpeg graph
 rendering one spec to two aspect ratios at two different lengths; the runner that
 makes re-running cheap; and verification that reads the render back and reports
 what is wrong with it.
+
+**Phase 5 makes it an editing tool.** `trim` finds dead air by measuring the
+audio and fillers by a closed list, and `plan_edit` — the first model stage —
+reviews that proposal, adds false starts of its own and ranks what survives into
+tiers. When the model cannot be reached the job still renders: `trim`'s cuts, every
+segment `essential` (§7.4), which is a real edit rather than the unedited take.
+
+**Two things have not happened yet, and both are about what is installed rather
+than what is written.** No *real* recording has been ingested — that needs a
+screen, a microphone and Cap on the machine doing the work — so the phase-2 focus
+tunables and `trim`'s thresholds have never met real footage. And no model has
+run: `plan_edit` is exercised against a scripted stand-in, so whether its cuts are
+ones you would have made is still an open question.
 
 **Phase 0 has been run** on the target machine — a base-model M1 MacBook Air,
 8GB, fanless. Its four verdicts are in
@@ -38,14 +51,17 @@ numbers under `docs/measurements/` and the harness in `tools/`:
 - **The agent CLI round-trips a schema** — 12/12 valid, though 11/12 arrive
   wrapped in a code fence, and latency runs 6–66 s per call.
 
-Next is phase 4 — real ingest and transcription, and the first output worth
-posting. Both of the things it was waiting on now exist.
+Next is a real take and a real model call — record one, run it, look at the cuts,
+and retune — which is phase 5's stop-and-reassess gate. Then phase 6's remaining
+layers and phase 7's review UI.
 
 ## Quickstart
 
 ```sh
 make install     # the package and its dev dependencies
 make run         # a synthetic job through the whole pipeline (needs ffmpeg)
+make take        # a Cap-format take: generate it, ingest it, render it
+                 # (needs whisper-cli and its weights; the others do not)
 make broken      # the deliberately bad fixture, so the checks are seen firing
 make check       # tests, generated-artifact drift, TypeScript typecheck
 ```

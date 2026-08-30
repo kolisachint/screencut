@@ -1,10 +1,15 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 3 built, plus §9.1's deterministic checks (`verify/`) pulled forward
-from phase 6 — the spec (`spec/`), the fixture generator (`ingest/`), `plan_focus`
-(`plan/`), the FFmpeg compiler (`compile/`), and the runner, cache and job record
-(`runner/`). `screencut run <job>` renders a job to every profile, skips whatever the cache
-already holds, and verifies each render. Real media and every model stage are ahead. See
+Status: phases 1 to 5 built, plus §9.1's deterministic checks (`verify/`) pulled forward
+from phase 6 — the spec (`spec/`), the Cap adapter and fixture generators (`ingest/`),
+the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the model stage
+`plan_edit` (`plan/`), open transcription (`synth/`), the FFmpeg compiler (`compile/`),
+and the runner, cache, agent adapter and job record (`runner/`). `screencut ingest
+<take>.cap --out <job>` turns a recorder bundle into a job; `screencut run <job>` renders
+it to every profile, skips whatever the cache already holds, and verifies each render.
+Two things the design leans on have still not happened, both for want of what is installed
+on the machine this was built on: no *real* recording has been ingested, and no model has
+run — `plan_edit` has only ever taken §7.4's degradation path or a scripted stand-in. See
 [`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is
@@ -351,6 +356,12 @@ open transcription.
 script. Same library, opposite purpose: one produces timings, the other independently
 checks that the render did not lie.
 
+There is a third call, and phase 4 is where it appeared: **`transcribe`** runs open
+transcription on the *source* audio, which is what a recording narrated in your own voice
+needs and what `align` cannot do, having no script to align to. It lives in `synth/asr.py`
+beside where `align` will; keeping them separate modules producing separate artifacts is
+this section's warning made structural rather than restated.
+
 ### 5.4 Persistence
 
 Media and artifacts are files, in per-job directories. Records are rows, in SQLite.
@@ -507,6 +518,17 @@ One definition still does four jobs — it constrains what the prompt asks for, 
 what comes back, generates the review UI's TypeScript types, and defines what the learner
 diffs.
 
+**A fragment is intent, not the finished document.** `plan_edit` returns removals and
+tiered segments as ranges it cares about; `EditDecisions`'s totality (§4.4) is then derived
+from them deterministically — removals win, segments are clipped to what is left, and
+anything untiered stays `essential`. Asking a language model to land a gapless,
+non-overlapping cover of exactly `[0, duration]` in float arithmetic buys a retry on
+nearly every call and no editorial gain. The invariant still holds by construction; it is
+arithmetic rather than the model that holds it, which is §4.5's discipline one level up.
+The same reasoning is why `Removal.proposed_by` is derived from overlap with `trim`'s
+proposal rather than reported by the model: the §9.1 override rate is a number about the
+model, so the model does not get to write it.
+
 **The honest cost of decision #13** is that the schema is now a strong instruction rather
 than a decoding constraint: the agent *can* return something invalid, where a
 constrained-decoding API could not. The mitigation is three lines of control flow, not a
@@ -558,6 +580,12 @@ Failure here means any of: nonzero exit, unparseable stdout, schema validation f
 twice, or a timeout. Collapsing them into one "the stage did not produce a fragment"
 branch is deliberate — with a subprocess boundary there is no typed exception hierarchy to
 discriminate, and every one of these has the same correct response.
+
+**A degraded artifact is not cached.** The fallback is what the stage produced *because it
+could not run*, and §5.2's content-addressing would otherwise serve it forever: one lost
+network, and every later run returns the degraded edit with the network back up and
+nothing to indicate why. The artifact file is still written, so the job finishes; the
+missing `stage_cache` row is what makes the next run try the model again.
 
 The degradations are chosen so that a fully-degraded job still renders: the full take, the
 verbatim transcript, plain captions, no overlays. That is a worse video, not a failed one,
@@ -738,7 +766,7 @@ rather than only known-good.
 ```
 screencut/
   spec/         Pydantic models, JSON Schema emit, migrations
-  ingest/       Recorder adapters -> RawTake; synthetic fixture generator
+  ingest/       Recorder adapters -> Source + FocusTrack; synthetic fixture generators
   plan/         Deterministic planners; LLM planners
   synth/        TTS and ASR stages (CLI contracts)
   compile/      EditSpec + RenderProfile -> FFmpeg graph; MLT export; MLT re-ingest

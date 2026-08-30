@@ -8,11 +8,17 @@ bounds, keystrokes or scroll deltas even if a recorder turns out to expose them.
 and an adapter that refuses to parse them is a brittle adapter. That is the
 opposite of the spec's `extra="forbid"`, and deliberately so: this is somebody
 else's format, and that one is ours.
+
+`RecorderEvents` is one adapter's input; `classify` is every adapter's output
+path. Cap (`ingest/cap.py`) skips the model entirely and calls `classify` with
+`Sample`s it built itself, because its coordinates are normalized at source and
+routing them through a pixel model and back would round twice for nothing.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,6 +74,53 @@ sample-to-sample radius classifies slow travel as dwell — and every zoom regio
 the video then merges into one."""
 
 
+@dataclass(frozen=True)
+class Sample:
+    """A cursor position in normalized source coordinates, at a source time.
+
+    The common currency of every adapter. `RecorderEvents` arrives in pixels and
+    is divided down; Cap arrives normalized already (environment findings §2) and
+    is passed through. Classification happens once, here, in the one space
+    `FocusTrack` is defined in — a second classifier written against pixels would
+    be the same dwell rule twice, and the pair that drifts.
+    """
+
+    t: float
+    x: float
+    y: float
+
+
+def classify(
+    samples: list[Sample],
+    click_times: list[float],
+    *,
+    click_window_s: float | None = None,
+    dwell_radius: float = DEFAULT_DWELL_RADIUS,
+    dwell_window_s: float = DEFAULT_DWELL_WINDOW_S,
+) -> FocusTrack:
+    """Label each sample movement, click or dwell, and weight it.
+
+    Deterministic and cheap: this is the §4.3 argument that no model participates
+    in the highest-impact spatial decision in the pipeline.
+    """
+    samples = sorted(samples, key=lambda s: s.t)
+    clicks = sorted(click_times)
+    if click_window_s is None:
+        click_window_s = _sample_interval(samples)
+    points: list[FocusPoint] = []
+    for index, sample in enumerate(samples):
+        x = min(max(sample.x, 0.0), 1.0)
+        y = min(max(sample.y, 0.0), 1.0)
+        kind = FocusKind.MOVEMENT
+        weight = MOVEMENT_WEIGHT
+        if any(abs(sample.t - c) <= click_window_s for c in clicks):
+            kind, weight = FocusKind.CLICK, CLICK_WEIGHT
+        elif _resting(samples, index, dwell_radius, dwell_window_s):
+            kind, weight = FocusKind.DWELL, DWELL_WEIGHT
+        points.append(FocusPoint(t=sample.t, x=x, y=y, weight=weight, kind=kind))
+    return FocusTrack(points=points)
+
+
 def to_focus_track(
     events: RecorderEvents,
     *,
@@ -75,30 +128,20 @@ def to_focus_track(
     dwell_radius: float = DEFAULT_DWELL_RADIUS,
     dwell_window_s: float = DEFAULT_DWELL_WINDOW_S,
 ) -> FocusTrack:
-    """Normalize, classify, and hand back our format.
-
-    Deterministic and cheap: this is the §4.3 argument that no model participates
-    in the highest-impact spatial decision in the pipeline.
-    """
-    samples = sorted(events.samples, key=lambda s: s.t)
-    clicks = sorted(events.clicks)
-    if click_window_s is None:
-        click_window_s = _sample_interval(samples)
-    points: list[FocusPoint] = []
-    for index, sample in enumerate(samples):
-        x = min(max(sample.x / events.width, 0.0), 1.0)
-        y = min(max(sample.y / events.height, 0.0), 1.0)
-        kind = FocusKind.MOVEMENT
-        weight = MOVEMENT_WEIGHT
-        if any(abs(sample.t - c) <= click_window_s for c in clicks):
-            kind, weight = FocusKind.CLICK, CLICK_WEIGHT
-        elif _resting(samples, index, events, dwell_radius, dwell_window_s):
-            kind, weight = FocusKind.DWELL, DWELL_WEIGHT
-        points.append(FocusPoint(t=sample.t, x=x, y=y, weight=weight, kind=kind))
-    return FocusTrack(points=points)
+    """Normalize, then hand the shared classifier our format."""
+    return classify(
+        [
+            Sample(t=s.t, x=s.x / events.width, y=s.y / events.height)
+            for s in events.samples
+        ],
+        events.clicks,
+        click_window_s=click_window_s,
+        dwell_radius=dwell_radius,
+        dwell_window_s=dwell_window_s,
+    )
 
 
-def _sample_interval(samples: list[CursorSample]) -> float:
+def _sample_interval(samples: list[Sample]) -> float:
     """Median gap between samples — the width of "the sample this click landed on"."""
     if len(samples) < 2:
         return DEFAULT_CLICK_WINDOW_S
@@ -107,9 +150,8 @@ def _sample_interval(samples: list[CursorSample]) -> float:
 
 
 def _resting(
-    samples: list[CursorSample],
+    samples: list[Sample],
     index: int,
-    events: RecorderEvents,
     radius: float,
     window_s: float,
 ) -> bool:
@@ -120,17 +162,15 @@ def _resting(
     back = index - 1
     seen = False
     while back >= 0 and current.t - samples[back].t <= window_s:
-        if _distance(samples[back], current, events) > radius:
+        if _distance(samples[back], current) > radius:
             return False
         seen = True
         back -= 1
     return seen and current.t - samples[max(back + 1, 0)].t >= window_s * 0.5
 
 
-def _distance(a: CursorSample, b: CursorSample, events: RecorderEvents) -> float:
-    dx = (a.x - b.x) / events.width
-    dy = (a.y - b.y) / events.height
-    return (dx * dx + dy * dy) ** 0.5
+def _distance(a: Sample, b: Sample) -> float:
+    return ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) ** 0.5
 
 
 def write_events(events: RecorderEvents, path: str | Path) -> Path:

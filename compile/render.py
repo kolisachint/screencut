@@ -19,6 +19,7 @@ from spec.migrations import load_spec_file
 from spec.profiles import Encoder, RenderProfile
 
 from compile.captions import render_ass
+from compile.ffmpeg import FfmpegMissing, graph_option, graph_option_or_legacy, with_graph_option
 from compile.graph import RenderPlan, build_audio_commands, build_commands, build_graph, encode_args, view_rects
 from compile.overlays import render_asset
 from compile.timeline import project
@@ -27,10 +28,6 @@ GRAPH_NAME = "graph.txt"
 COMMANDS_NAME = "commands.txt"
 AUDIO_COMMANDS_NAME = "audio_commands.txt"
 ASS_NAME = "captions.ass"
-
-
-class FfmpegMissing(RuntimeError):
-    pass
 
 
 class EncoderUnavailable(RuntimeError):
@@ -87,8 +84,12 @@ def prepare(
         focus,
         assets,
         ass_name=str(work_dir / ASS_NAME),
-        commands_name=str(work_dir / COMMANDS_NAME),
-        audio_commands_name=str(work_dir / AUDIO_COMMANDS_NAME),
+        # None when the script is empty: FFmpeg rejects a `sendcmd` with nothing
+        # to send rather than ignoring it (compile/graph.py).
+        commands_name=str(work_dir / COMMANDS_NAME) if commands.strip() else None,
+        audio_commands_name=(
+            str(work_dir / AUDIO_COMMANDS_NAME) if audio_commands.strip() else None
+        ),
         music_input=music_input,
     )
 
@@ -110,7 +111,7 @@ def prepare(
     graph_args = [
         "ffmpeg", "-y", "-hide_banner", "-nostdin", "-loglevel", "error",
         *inputs,
-        "-filter_complex_script", str(work_dir / GRAPH_NAME),
+        graph_option_or_legacy(), str(work_dir / GRAPH_NAME),
         "-map", "[vout]",
         "-map", "[aout]",
     ]
@@ -134,13 +135,16 @@ def prepare(
 def run(plan: RenderPlan, job_dir: Path) -> Path:
     if shutil.which("ffmpeg") is None:
         raise FfmpegMissing("ffmpeg is not on PATH")
-    codec = plan.ffmpeg_args[plan.ffmpeg_args.index("-c:v") + 1]
+    # The graph option belongs to the binary, not to the plan, and a plan can
+    # outlive the FFmpeg it was built against (compile/ffmpeg.py).
+    args = with_graph_option(plan.ffmpeg_args, graph_option())
+    codec = args[args.index("-c:v") + 1]
     if not _encoder_available(codec):
         raise EncoderUnavailable(
             f"this FFmpeg has no {codec!r} encoder. VideoToolbox is macOS-only (§16); "
             f"re-run with --encoder software, which is also what golden renders use."
         )
-    subprocess.run(plan.ffmpeg_args, cwd=job_dir, check=True)
+    subprocess.run(args, cwd=job_dir, check=True)
     return Path(job_dir) / plan.out_path
 
 

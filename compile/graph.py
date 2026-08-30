@@ -289,13 +289,21 @@ def build_audio_commands(timeline: EditedTimeline, spec: EditSpec) -> str:
 
 def video_chain(spec: EditSpec, profile: RenderProfile, timeline: EditedTimeline, focus: FocusPlan,
                 assets: list[OverlayAsset], overlay_input_base: int,
-                commands_name: str) -> tuple[list[str], str]:
+                commands_name: str | None) -> tuple[list[str], str]:
+    """`commands_name` is None when there are no commands to send.
+
+    A `sendcmd` pointed at an empty file is not a no-op — FFmpeg refuses the graph
+    with "No commands were specified" and exits. Zoom mode with no overlays emits
+    nothing (the zoom itself is an expression, not a command), which is exactly
+    what an ingested take looks like before `plan_overlays` exists.
+    """
     parts: list[str] = []
+    send = f"sendcmd=f={commands_name}," if commands_name else ""
     if isinstance(focus, CropPathPlan):
         crop_w = _even(focus.window_w * spec.source.width)
         crop_h = _even(focus.window_h * spec.source.height)
         spatial = (
-            f"sendcmd=f={commands_name},"
+            f"{send}"
             f"crop@focus=w={crop_w}:h={crop_h}:x=0:y=0,"
             f"scale={profile.width}:{profile.height}:flags=bicubic"
         )
@@ -303,7 +311,7 @@ def video_chain(spec: EditSpec, profile: RenderProfile, timeline: EditedTimeline
         zoom, x, y = zoom_expressions(output_zoom_regions(focus, timeline), focus.ease)
         spatial = (
             f"scale={profile.width}:{profile.height}:flags=bicubic,"
-            f"sendcmd=f={commands_name},"
+            f"{send}"
             f"zoompan=z='{zoom}':x='{x}':y='{y}':"
             f"d=1:s={profile.width}x{profile.height}:fps={profile.fps:g}"
         )
@@ -333,14 +341,21 @@ def video_chain(spec: EditSpec, profile: RenderProfile, timeline: EditedTimeline
     return parts, label
 
 
-def audio_chain(spec: EditSpec, music_input: int | None, audio_commands_name: str) -> tuple[list[str], str]:
+def audio_chain(
+    spec: EditSpec, music_input: int | None, audio_commands_name: str | None
+) -> tuple[list[str], str]:
+    """`audio_commands_name` is None when nothing ducks the bed.
+
+    Same trap as `video_chain`: a bed with no narration over it has nothing to
+    duck under, and an `asendcmd` reading an empty file fails the whole graph.
+    """
     parts: list[str] = []
     if music_input is None:
         source = "ac"
     else:
+        duck = f",asendcmd=f={audio_commands_name}" if audio_commands_name else ""
         parts.append(
-            f"[{music_input}:a]volume@bed=volume={spec.audio.music_gain_db:g}dB,"
-            f"asendcmd=f={audio_commands_name}[bed]"
+            f"[{music_input}:a]volume@bed=volume={spec.audio.music_gain_db:g}dB{duck}[bed]"
         )
         parts.append(f"[ac][bed]amix=inputs=2:duration=first:normalize=0[mixed]")
         source = "mixed"
@@ -353,8 +368,8 @@ def audio_chain(spec: EditSpec, music_input: int | None, audio_commands_name: st
 
 
 def build_graph(spec: EditSpec, profile: RenderProfile, timeline: EditedTimeline, focus: FocusPlan,
-                assets: list[OverlayAsset], ass_name: str, commands_name: str,
-                audio_commands_name: str, music_input: int | None) -> str:
+                assets: list[OverlayAsset], ass_name: str, commands_name: str | None,
+                audio_commands_name: str | None, music_input: int | None) -> str:
     parts: list[str] = []
     labels: list[str] = []
     for index, span in enumerate(timeline.spans):

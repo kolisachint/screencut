@@ -3,8 +3,10 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phase 0 has been run and phases 1 to 3 are built, with phase 6's deterministic layer among
-them. Its measured results are in [`environment-findings.md`](environment-findings.md), and
+Phase 0 has been run and phases 1 to 5 are built, with phase 6's deterministic layer among
+them. Two phases carry an asterisk: phase 4 has no real take and phase 5 has never called
+a model, both because of what is not installed on the machine this was built on. Each
+section says so and marks which of its exit criteria that leaves open. Its measured results are in [`environment-findings.md`](environment-findings.md), and
 phases 4, 5 and 8 should be read alongside it. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
@@ -116,7 +118,8 @@ someone concludes the compiler is broken.
 which `runner/stages.py` uses, so twenty tests fail with `Option not found`. The
 replacement `-/filter_complex` is verified working here but is not applied — this phase
 excludes pipeline code, and the swap needs a version guard since the new syntax predates
-neither FFmpeg 7 nor the old option's removal cleanly. **Phase 4 should fix this first.**
+neither FFmpeg 7 nor the old option's removal cleanly. **Phase 4 fixed this first**, as a
+capability probe rather than a version comparison (`compile/ffmpeg.py`).
 On a clean macOS box today no single FFmpeg has both libass and
 `-filter_complex_script`, so this is not optional maintenance.
 
@@ -260,7 +263,7 @@ copies of everything.
 
 ---
 
-## Phase 4 — Real ingest and transcription ★
+## Phase 4 — Real ingest and transcription ★ — **built, less the real take**
 
 **★ First genuinely useful output.** A real recording in, a captioned auto-zoomed 9:16
 short and 16:9 demo out, narrated by your own voice — with no TTS anywhere in the path.
@@ -278,17 +281,104 @@ short and 16:9 demo out, narrated by your own voice — with no TTS anywhere in 
 
 **Exit criteria**
 
-- A real recording produces both renders, unattended, from one command.
+- A real recording produces both renders, unattended, from one command. — **met for a
+  Cap-format recording, not a real one.** `screencut ingest <take>.cap --out <job>` then
+  `screencut run <job>` (or `make take`) produces both, unattended, from a bundle in Cap's
+  own format. No real take could be recorded here; see *How it came out*.
 - Zoom behaviour on real cursor data is sane — this is the first test of the phase-2
-  tunables against reality, and expect to retune them.
+  tunables against reality, and expect to retune them. — **open.** Sane on the fixture's
+  cursor data, which is the fixture's data. The tunables have not met reality.
 - The output is something you would actually post. If it is not, stop and fix that before
-  continuing; every later phase assumes this baseline is good.
+  continuing; every later phase assumes this baseline is good. — **open**, and for the
+  same reason. Nothing has been posted, because nothing real has been recorded.
 
 **Not in this phase:** synthesized voice, cuts, verification, review UI.
 
+**How it came out.** Everything phase 0 unblocked got built, and the one thing it could
+not unblock is the one thing still open: **no real take was promoted into `golden/`,**
+because recording one needs a screen, a microphone and Cap on the machine doing the work.
+Read the exit criteria against that. What runs instead is `ingest/cap_fixture.py`, a
+bundle written in Cap's own on-disk format carrying every trap phase 0 measured at or
+beyond the measured severity — a 3.6 s rest gap against the real take's 1.98 s worst case,
+clicks landing inside those gaps with no position of their own, the 0.194 s clock offset,
+and a sidecar claiming an fps the stream does not have. A fixture whose traps are gentler
+than reality passes while the adapter is broken, so these are not.
+
+**The first thing was the FFmpeg option, exactly as phase 0 said.** It came out as a
+**capability probe rather than a version comparison**, and that was the decision inside
+the ten lines. Version strings are a proxy for the thing that changed — distribution
+builds carry suffixes, git builds report `N-109848-g0d1c2c9c1a` and no number at all —
+while `-h full` either lists `-filter_complex_script` or does not, which is the question.
+Asking the binary cannot guess wrong. The second half is less obvious: `compile` writes
+the whole FFmpeg command into its manifest and `render` replays it, so a cached compile
+plus a toolchain upgrade replays an option that no longer exists. The option belongs to
+the binary, so `render` rewrites it and `render`'s cache key carries it.
+
+**Reading absence as dwell turned out to need no new dwell rule.** Phase 0 sharpened the
+known trap into "dwell is invisible, not mismeasured", which sounds like it wants a
+special case. It does not: resampling onto a fixed grid and *holding* position across a
+gap — rather than interpolating a glide that never happened — turns absence into a run of
+identical samples, which is what the existing classifier already reads as dwell. One rule,
+reached two ways. The four rest gaps in the fixture produce exactly four zoom regions,
+each starting the moment the cursor stops.
+
+**One caption list, sized against the tightest profile.** §4.1 has one `EditSpec` serving
+N profiles and `EditSpec.captions` is part of that document, so "profile-aware line
+breaking" cannot mean one list per profile. Wrapping is already per profile in
+`compile/captions.py`; what `plan_captions` decides is where a block ends, and sizing that
+against the narrowest box is the only answer that is one list. Blocks break on sentence
+endings first, pauses second, capacity last — capacity being the fallback is the point,
+because a block split only on capacity reads as cut mid-thought.
+
+**`transcribe` and `plan_captions` are the first stages that are not per profile.** What
+was said does not depend on the shape it will be rendered into, and running ASR twice for
+two profiles is 23 seconds thrown away per run on the target machine. They run once per
+job, ahead of the per-profile group and not interleaved with it, because they rewrite
+`spec.json` and every per-profile fingerprint is taken from the spec. `transcribe` is also
+the first stage to set `holds_local_weights`, which `runner/stages.py` predicted it would
+be.
+
+**Whether a job wants those stages is not in the spec, and it cannot be.** `captions: []`
+means "not planned yet" in an ingested job and "this take is silent" in the next one, and
+nothing in the document distinguishes them — a fixture with hand-authored captions would
+be transcribed over. So `job.json` says: pipeline configuration for one run, beside
+`spec.json` rather than inside it. A job directory without one is a job whose spec is
+complete as given, which is every fixture in this repository, which is why adding a whole
+stage group broke none of them.
+
+**Two bugs, both found by running the first job that was not the synthetic fixture.**
+
+An ingested take has no overlays yet, and in zoom mode that leaves the `sendcmd` script
+empty — FFmpeg does not ignore a `sendcmd` with nothing to send, it refuses the graph with
+"No commands were specified" and exits. The synthetic fixture always has overlays and
+music, so the path had never run. Both `sendcmd` and `asendcmd` are now omitted when there
+is nothing to send.
+
+And §9.1's budget check failed every phase-4 job, correctly and uselessly: a 24 s take
+against a 15 s budget overruns, and before `plan_edit` exists there is nothing to have cut
+with. A check that fails on every correct job in a phase gets ignored within a week, which
+is this repository's own standing warning turned on itself. It reports the overrun as a
+warning while the spec carries no edit decisions at all, and as a failure once something
+has proposed one.
+
+**What could not be run here.** ASR against real speech. The stage runs end to end — audio
+extraction, the phase 0 invocation, the parse, the artifact — and the parser is written
+against `output_json` in whisper.cpp's own `examples/cli/cli.cpp` rather than against a
+JSON shape somebody imagined. But no machine available for this work could reach the
+weights, so what has been transcribed is a test tone, correctly, to no words. The
+end-to-end ASR test is written against whatever `constraints.yaml` names and skips when
+those weights are absent, so it runs on the target machine at `large-v3` rather than
+quietly testing something smaller.
+
+**What phase 5 inherits.** A real take, still. Both remaining exit criteria — "zoom
+behaviour on real cursor data is sane" and "the output is something you would actually
+post" — are judgements about footage, and the phase-2 tunables have not met reality yet.
+Expect to retune them, and expect the first real recording to be where `plan_captions`'s
+`PAUSE_S` and the focus weights get their first honest number.
+
 ---
 
-## Phase 5 — Editorial pass ★
+## Phase 5 — Editorial pass ★ — **built, less the judgement**
 
 **★ The product claim.** Phase 4 produces a captioned, auto-zoomed version of everything
 you recorded. This is the phase where it becomes *edited* — where the dead air, the
@@ -318,15 +408,23 @@ fumbled restart and the "um" come out.
 
 - `trim` alone produces a watchable video from a real take: no dead air, no fillers, no
   clipped words at the boundaries. This is the §7.4 floor, and it has to be genuinely
-  acceptable on its own.
+  acceptable on its own. — **met on the fixture, not on a real take.** `silencedetect`
+  finds all four of the synthetic fixture's dead-air gaps and the closed list finds its
+  one "um"; 24 s becomes 17.7 s and §9.1's `cut_mid_word` reports nothing. Whether it is
+  *watchable* is a judgement about footage, and there is still no footage.
 - `plan_edit` on top of it produces cuts you would have made, and its overrides of `trim`
-  are defensible — check the override rate on the report (§9.1).
+  are defensible — check the override rate on the report (§9.1). — **open.** The stage,
+  the adapter and the override rate are built and exercised against a scripted agent;
+  `hoocode` is not installed on the machine this was built on, so no model has run.
 - One `EditSpec` renders at two different lengths under two `duration_budget` values, and
-  both are coherent — the short is not just the demo with its ending missing.
+  both are coherent — the short is not just the demo with its ending missing. — **met**,
+  and with no second model call, which is the §4.4.1 half of the claim.
 - Killing the network mid-job still produces a render: the `trim`-only one, all segments
-  `essential`.
+  `essential`. — **met.**
 - Re-running with an unchanged transcript hits the cache and calls no model. If it does not,
-  phase 3's key is wrong (§5.2), and everything after this gets slow and expensive.
+  phase 3's key is wrong (§5.2), and everything after this gets slow and expensive. —
+  **met**, and a *degraded* run deliberately does not cache, so one lost network does not
+  become permanent.
 
 **This is a stop-and-reassess gate,** and decision #19 gives it a much better shape than a
 single pass/fail: `trim` and `plan_edit` can be judged separately. If `trim` is good and
@@ -337,6 +435,72 @@ assumption that later phases improve it. They do not; they decorate it.
 
 **Not in this phase:** emphasis, overlays, metadata — those are phase 9, and they are
 decoration on top of this.
+
+**How it came out.** The stop-and-reassess gate cannot be walked through here, and that is
+the honest headline: `hoocode` is not installed on the machine this was built on, so
+`plan_edit` has never called a model. Everything around it is built and exercised — the
+adapter, the reconciliation, the cache key, the override rate, and §7.4's degradation —
+against a script on `PATH` that emits the event stream hoocode emits, fence and all. That
+tests our code end to end and tests nothing about editorial taste, which is the half the
+gate is actually for.
+
+**`trim` is better than the plan gave it credit for, and the reason is `silencedetect`.**
+Measuring the audio rather than inferring silence from gaps in the transcript is the
+difference between a mechanism and a heuristic: a gap in the words is not a gap in the
+sound, and a long "uhhhh" is one and not the other. On the synthetic fixture it finds all
+four dead-air gaps to within 20 ms of where the generator put them.
+
+**Three rules in `trim`, each written after it cut something it should not have.** A range
+with words in it is not dead air whatever the meter says — someone speaking quietly reads
+as silence at any threshold loose enough to catch real dead air, so ASR wins and the
+silence is clipped around the words. `keep_pad_ms` *shrinks* a removal rather than growing
+it, because a cut at the level threshold clips the breath before the next word. And
+removals merge, because a filler landing against a silence would otherwise leave a 40 ms
+segment that §4.4's totality makes real, selectable and reviewable.
+
+**The filler list is deliberately short.** "so", "like", "right" and "actually" are fillers
+about half the time and ordinary words the other half. A list cannot tell which, and
+stripping every one of them mangles speech — judging that is exactly what §7.1 pays
+`plan_edit` for, so the list stays unambiguous and the model gets the ambiguous half.
+
+**The model returns intent; the partition is derived.** This is the decision the plan did
+not contain. `EditDecisions` demands a gapless, non-overlapping cover of exactly
+`[0, duration]`, and asking a language model to land that in float arithmetic buys a retry
+on nearly every call for no editorial gain. So the fragment carries removals and tiered
+segments as ranges the model cares about, and `reconcile` derives the total partition:
+removals win, segments are clipped to what is left, and anything nobody tiered stays
+`essential`. §4.4's totality still holds by construction — it is arithmetic that holds it,
+which is §4.5's discipline applied one level up.
+
+**`proposed_by` is derived rather than reported,** for the same reason. A removal
+overlapping one of `trim`'s proposals came from `trim` whatever the model says, and the
+§9.1 override rate is a number about the model that the model therefore cannot write about
+itself.
+
+**No `duration_budget` reaches the prompt, and that is §4.4.1 doing real work.** Putting
+budgets in front of the model would make the ranking depend on the profile — and then one
+`EditSpec` could not render at two lengths, a shorter short would cost a model call, and
+the cache key of the most expensive stage in the pipeline would move whenever somebody
+adjusted a number the compiler owns.
+
+**A degraded artifact is not cached.** §7.4 says a failed LLM stage degrades and the job
+records it; it does not say what the cache should do, and the obvious answer is wrong.
+Caching the fallback makes one lost network permanent — the next run, with the network
+back, serves the degraded artifact forever. The file is still written so the job finishes;
+the missing cache row is what makes the next run try the model again.
+
+**What `trim` alone gets wrong, and why it is left wrong.** Cutting "um" out of the middle
+of "so um clicking through…" leaves "so" as a 0.54 s caption block of its own, which §9.1
+duly warns about. The deterministic fix — extend a removal to swallow a fragment too short
+to display — depends on `min_display_s`, which is per profile, and tiering is supposed to
+be aspect-independent. So it is left for `plan_edit`, which under §7.1 is allowed to widen
+a proposed removal and is the stage that should be making that call.
+
+**What phase 6 and 7 inherit.** The judgement half of this gate, still: a real take, a
+model that has actually run on it, and someone deciding whether the cuts are ones they
+would have made. Until that happens, `trim` is the product and `plan_edit` is untested
+polish on top of it — which, per decision #19, is a real shipping position rather than a
+failure.
 
 ---
 
