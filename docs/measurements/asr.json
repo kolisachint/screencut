@@ -1,0 +1,472 @@
+{
+  "host": {
+    "cpu": "Apple M1",
+    "cores": "8",
+    "memory_gb": 8.0,
+    "os": "Darwin 27.0",
+    "arch": "arm64",
+    "python": "3.12.0",
+    "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "measured_at": "2026-08-30"
+  },
+  "sample_seconds": 44.37,
+  "sample_source": "macOS `say`, known reference script",
+  "results": [
+    {
+      "backend": "mlx-whisper",
+      "size": "medium",
+      "ok": true,
+      "note": "Apple MLX, unified-memory GPU",
+      "burst_s": 12.495,
+      "sustained_s": 12.983,
+      "peak_rss_mb": 1959.9,
+      "peak_footprint_mb": 3618.7,
+      "swap_delta_mb": -23.1,
+      "realtime_factor": 3.42,
+      "word_timings": true,
+      "wer": 0.007,
+      "transcript_head": "Today I want to walk you through the new analytics dashboard we shipped last week. When you first open it, you land on the Overview tab, which summarizes traffi"
+    },
+    {
+      "backend": "whisper.cpp",
+      "size": "medium",
+      "ok": true,
+      "note": "GGML + Metal",
+      "burst_s": 9.13,
+      "sustained_s": 9.229,
+      "peak_rss_mb": 2161.2,
+      "peak_footprint_mb": 2132.5,
+      "swap_delta_mb": -8.0,
+      "realtime_factor": 4.81,
+      "word_timings": true,
+      "wer": 0.028,
+      "transcript_head": "Today I want to walk you through the new analytics dashboard we shipped last week. When you first open it, you land on the Overview tab, which summarizes traffi"
+    },
+    {
+      "backend": "faster-whisper",
+      "size": "medium",
+      "ok": true,
+      "note": "CTranslate2, CPU only on Apple Silicon",
+      "burst_s": 34.412,
+      "sustained_s": 32.251,
+      "peak_rss_mb": 2154.2,
+      "peak_footprint_mb": 1901.0,
+      "swap_delta_mb": -8.0,
+      "realtime_factor": 1.38,
+      "word_timings": true,
+      "wer": 0.007,
+      "transcript_head": "Today I want to walk you through the new analytics dashboard we shipped last week. When you first open it, you land on the Overview tab, which summarizes traffi"
+    },
+    {
+      "backend": "mlx-whisper",
+      "size": "large-v3",
+      "ok": true,
+      "note": "Apple MLX, unified-memory GPU",
+      "burst_s": 58.329,
+      "sustained_s": 80.378,
+      "peak_rss_mb": 2439.3,
+      "peak_footprint_mb": 5404.4,
+      "swap_delta_mb": 339.2,
+      "realtime_factor": 0.55,
+      "word_timings": true,
+      "wer": 0.007,
+      "transcript_head": "Today I want to walk you through the new analytics dashboard we shipped last week. When you first open it, you land on the overview tab, which summarizes traffi"
+    },
+    {
+      "backend": "whisper.cpp",
+      "size": "large-v3",
+      "ok": true,
+      "note": "GGML + Metal",
+      "burst_s": 38.424,
+      "sustained_s": 55.507,
+      "peak_rss_mb": 3837.5,
+      "peak_footprint_mb": 3984.5,
+      "swap_delta_mb": 132.7,
+      "realtime_factor": 0.8,
+      "word_timings": true,
+      "wer": 0.007,
+      "transcript_head": "Today I want to walk you through the new analytics dashboard we shipped last week. When you first open it, you land on the overview tab, which summarizes traffi"
+    },
+    {
+      "backend": "faster-whisper",
+      "size": "large-v3",
+      "ok": true,
+      "note": "CTranslate2, CPU only on Apple Silicon",
+      "burst_s": 82.279,
+      "sustained_s": 377.894,
+      "peak_rss_mb": 2994.8,
+      "peak_footprint_mb": 3446.6,
+      "swap_delta_mb": 361.9,
+      "realtime_factor": 0.12,
+      "word_timings": true,
+      "wer": 0.007,
+      "transcript_head": "Today I want to walk you through the new analytics dashboard we shipped last week. When you first open it, you land on the overview tab, which summarizes traffi"
+    }
+  ],
+  "measurements": [
+    {
+      "label": "mlx-whisper/medium",
+      "ok": true,
+      "burst_s": 12.495,
+      "sustained_s": 12.983,
+      "peak_rss_mb": 1959.9,
+      "peak_footprint_mb": 3618.7,
+      "swap_delta_mb": -23.1,
+      "repeats": 2,
+      "runs": [
+        {
+          "label": "mlx-whisper/medium#0",
+          "wall_s": 12.495,
+          "peak_rss_bytes": 2055077888,
+          "exit_code": 0,
+          "swap_delta_bytes": -100663296,
+          "peak_footprint_bytes": 3791801104,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "-m",
+            "mlx_whisper.cli",
+            "--model",
+            "mlx-community/whisper-medium-mlx",
+            "--word-timestamps",
+            "True",
+            "--output-dir",
+            "/tmp/phase0/asr/mlx-whisper/medium",
+            "--output-name",
+            "mlx",
+            "--output-format",
+            "json",
+            "--verbose",
+            "False",
+            "/tmp/phase0/sample.wav"
+          ],
+          "stdout_tail": "Detected language: English",
+          "stderr_tail": "Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]\nFetching 4 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4/4 [00:00<00:00, 2573.98it/s]\n\n  0%|          | 0/4436 [00:00<?, ?frames/s]\n 61%|\u2588\u2588\u2588\u2588\u2588\u2588    | 2710/4436 [00:05<00:03, 514.70frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [00:08<00:00, 496.91frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [00:08<00:00, 500.07frames/s]",
+          "note": ""
+        },
+        {
+          "label": "mlx-whisper/medium#1",
+          "wall_s": 12.983,
+          "peak_rss_bytes": 2053554176,
+          "exit_code": 0,
+          "swap_delta_bytes": -24180163,
+          "peak_footprint_bytes": 3794455312,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "-m",
+            "mlx_whisper.cli",
+            "--model",
+            "mlx-community/whisper-medium-mlx",
+            "--word-timestamps",
+            "True",
+            "--output-dir",
+            "/tmp/phase0/asr/mlx-whisper/medium",
+            "--output-name",
+            "mlx",
+            "--output-format",
+            "json",
+            "--verbose",
+            "False",
+            "/tmp/phase0/sample.wav"
+          ],
+          "stdout_tail": "Detected language: English",
+          "stderr_tail": "Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]\nFetching 4 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4/4 [00:00<00:00, 3215.26it/s]\n\n  0%|          | 0/4436 [00:00<?, ?frames/s]\n 61%|\u2588\u2588\u2588\u2588\u2588\u2588    | 2710/4436 [00:05<00:03, 498.62frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [00:09<00:00, 474.98frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [00:09<00:00, 479.13frames/s]",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "label": "whisper.cpp/medium",
+      "ok": true,
+      "burst_s": 9.13,
+      "sustained_s": 9.229,
+      "peak_rss_mb": 2161.2,
+      "peak_footprint_mb": 2132.5,
+      "swap_delta_mb": -8.0,
+      "repeats": 2,
+      "runs": [
+        {
+          "label": "whisper.cpp/medium#0",
+          "wall_s": 9.13,
+          "peak_rss_bytes": 2266234880,
+          "exit_code": 0,
+          "swap_delta_bytes": -8388608,
+          "peak_footprint_bytes": 2236074384,
+          "cmd": [
+            "/opt/homebrew/bin/whisper-cli",
+            "-m",
+            "/tmp/phase0/ggml/ggml-medium.bin",
+            "-f",
+            "/tmp/phase0/sample.wav",
+            "-oj",
+            "-of",
+            "/tmp/phase0/asr/whispercpp/medium/cpp",
+            "--max-len",
+            "1",
+            "-ml",
+            "1",
+            "-np"
+          ],
+          "stdout_tail": "...30.410]   means\n[00:00:30.410 --> 00:00:30.580]   you\n[00:00:30.580 --> 00:00:30.750]   can\n[00:00:30.750 --> 00:00:31.020]   hand\n[00:00:31.020 --> 00:00:31.360]   someone\n[00:00:31.360 --> 00:00:31.410]   a\n[00:00:31.410 --> 00:00:31.630]   link\n[00:00:31.630 --> 00:00:32.120]   instead\n[00:00:32.120 --> 00:00:32.280]   of\n[00:00:32.280 --> 00:00:32.340]   a\n[00:00:32.340 --> 00:00:33.110]   screenshot\n[00:00:33.110 --> 00:00:33.360]  .\n[00:00:33.360 --> 00:00:33.540]   The\n[00:00:33.540 --> 00:00:33.780]   last\n[00:00:33.780 --> 00:00:34.120]   thing\n[00:00:34.120 --> 00:00:34.380]   worth\n[00:00:34.380 --> 00:00:34.980]   mentioning\n[00:00:34.980 --> 00:00:35.100]   is\n[00:00:35.100 --> 00:00:35.280]   the\n[00:00:35.280 --> 00:00:35.640]   export\n[00:00:35.640 --> 00:00:36.050]   button\n[00:00:36.050 --> 00:00:36.120]   in\n[00:00:36.120 --> 00:00:36.300]   the\n[00:00:36.300 --> 00:00:36.480]   top\n[00:00:36.480 --> 00:00:36.780]   right\n[00:00:36.780 --> 00:00:37.140]   corner\n[00:00:37.140 --> 00:00:37.360]  .\n[00:00:37.360 --> 00:00:37.520]   It\n[00:00:37.520 --> 00:00:38.020]   produces\n[00:00:38.020 --> 00:00:38.120]   a\n[00:00:38.120 --> 00:00:38.460]   comma\n[00:00:38.460 --> 00:00:38.470]  -\n[00:00:38.470 --> 00:00:38.660]  se\n[00:00:38.660 --> 00:00:38.830]  par\n[00:00:38.830 --> 00:00:39.060]  ated\n[00:00:39.060 --> 00:00:39.320]   file\n[00:00:39.320 --> 00:00:39.720]   that\n[00:00:39.720 --> 00:00:40.050]   matches\n[00:00:40.050 --> 00:00:40.500]   exactly\n[00:00:40.500 --> 00:00:40.760]   what\n[00:00:40.760 --> 00:00:40.970]   you\n[00:00:40.970 --> 00:00:41.160]   see\n[00:00:41.160 --> 00:00:41.630]   on\n[00:00:41.630 --> 00:00:41.690]   screen\n[00:00:41.690 --> 00:00:41.820]  ,\n[00:00:41.820 --> 00:00:42.520]   including\n[00:00:42.520 --> 00:00:42.690]   any\n[00:00:42.690 --> 00:00:43.100]   filters\n[00:00:43.100 --> 00:00:43.270]   you\n[00:00:43.270 --> 00:00:43.500]   have\n[00:00:43.500 --> 00:00:43.910]   applied\n[00:00:43.910 --> 00:00:44.120]  .",
+          "stderr_tail": "... 'tri' library in 0.013 sec\nggml_metal_library_compile_all: compiled 'ssm' library in 0.012 sec\nggml_metal_library_compile_all: compiled 'wkv' library in 0.012 sec\nggml_metal_library_compile_all: compiled 'gated_delta_net' library in 0.012 sec\nggml_metal_library_compile_all: compiled 'solve_tri' library in 0.012 sec\nggml_metal_library_compile_all: compiled 'rope' library in 0.011 sec\nggml_metal_library_compile_all: compiled 'conv' library in 0.013 sec\nggml_metal_library_compile_all: compiled 'upscale' library in 0.011 sec\nggml_metal_library_compile_all: compiled 'argsort' library in 0.013 sec\nggml_metal_library_compile_all: compiled 'pool' library in 0.010 sec\nggml_metal_library_compile_all: compiled 'misc' library in 0.010 sec\nggml_metal_library_compile_all: loaded 20 libraries from embedded data in 0.014 sec (max single = 0.013 sec)\nggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)\nggml_metal_device_init: GPU name:   MTL0 (Apple M1)\nggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)\nggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)\nggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)\nggml_metal_device_init: simdgroup reduction   = true\nggml_metal_device_init: simdgroup matrix mul. = true\nggml_metal_device_init: has unified memory    = true\nggml_metal_device_init: has bfloat            = true\nggml_metal_device_init: has tensor            = false\nggml_metal_device_init: use residency sets    = true\nggml_metal_device_init: use shared buffers    = true\nggml_metal_device_init: recommendedMaxWorkingSetSize  =  5726.63 MB\nload_backend: loaded MTL backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-metal.so\nload_backend: loaded CPU backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-cpu-apple_m1.so\nread_audio_data: reading audio data from '/tmp/phase0/sample.wav' ...\nread_audio_data: trying to decode with miniaudio\noutput_json: saving output to '/tmp/phase0/asr/whispercpp/medium/cpp.json'",
+          "note": ""
+        },
+        {
+          "label": "whisper.cpp/medium#1",
+          "wall_s": 9.229,
+          "peak_rss_bytes": 2247720960,
+          "exit_code": 0,
+          "swap_delta_bytes": -8388608,
+          "peak_footprint_bytes": 2235894184,
+          "cmd": [
+            "/opt/homebrew/bin/whisper-cli",
+            "-m",
+            "/tmp/phase0/ggml/ggml-medium.bin",
+            "-f",
+            "/tmp/phase0/sample.wav",
+            "-oj",
+            "-of",
+            "/tmp/phase0/asr/whispercpp/medium/cpp",
+            "--max-len",
+            "1",
+            "-ml",
+            "1",
+            "-np"
+          ],
+          "stdout_tail": "...30.410]   means\n[00:00:30.410 --> 00:00:30.580]   you\n[00:00:30.580 --> 00:00:30.750]   can\n[00:00:30.750 --> 00:00:31.020]   hand\n[00:00:31.020 --> 00:00:31.360]   someone\n[00:00:31.360 --> 00:00:31.410]   a\n[00:00:31.410 --> 00:00:31.630]   link\n[00:00:31.630 --> 00:00:32.120]   instead\n[00:00:32.120 --> 00:00:32.280]   of\n[00:00:32.280 --> 00:00:32.340]   a\n[00:00:32.340 --> 00:00:33.110]   screenshot\n[00:00:33.110 --> 00:00:33.360]  .\n[00:00:33.360 --> 00:00:33.540]   The\n[00:00:33.540 --> 00:00:33.780]   last\n[00:00:33.780 --> 00:00:34.120]   thing\n[00:00:34.120 --> 00:00:34.380]   worth\n[00:00:34.380 --> 00:00:34.980]   mentioning\n[00:00:34.980 --> 00:00:35.100]   is\n[00:00:35.100 --> 00:00:35.280]   the\n[00:00:35.280 --> 00:00:35.640]   export\n[00:00:35.640 --> 00:00:36.050]   button\n[00:00:36.050 --> 00:00:36.120]   in\n[00:00:36.120 --> 00:00:36.300]   the\n[00:00:36.300 --> 00:00:36.480]   top\n[00:00:36.480 --> 00:00:36.780]   right\n[00:00:36.780 --> 00:00:37.140]   corner\n[00:00:37.140 --> 00:00:37.360]  .\n[00:00:37.360 --> 00:00:37.520]   It\n[00:00:37.520 --> 00:00:38.020]   produces\n[00:00:38.020 --> 00:00:38.120]   a\n[00:00:38.120 --> 00:00:38.460]   comma\n[00:00:38.460 --> 00:00:38.470]  -\n[00:00:38.470 --> 00:00:38.660]  se\n[00:00:38.660 --> 00:00:38.830]  par\n[00:00:38.830 --> 00:00:39.060]  ated\n[00:00:39.060 --> 00:00:39.320]   file\n[00:00:39.320 --> 00:00:39.720]   that\n[00:00:39.720 --> 00:00:40.050]   matches\n[00:00:40.050 --> 00:00:40.500]   exactly\n[00:00:40.500 --> 00:00:40.760]   what\n[00:00:40.760 --> 00:00:40.970]   you\n[00:00:40.970 --> 00:00:41.160]   see\n[00:00:41.160 --> 00:00:41.630]   on\n[00:00:41.630 --> 00:00:41.690]   screen\n[00:00:41.690 --> 00:00:41.820]  ,\n[00:00:41.820 --> 00:00:42.520]   including\n[00:00:42.520 --> 00:00:42.690]   any\n[00:00:42.690 --> 00:00:43.100]   filters\n[00:00:43.100 --> 00:00:43.270]   you\n[00:00:43.270 --> 00:00:43.500]   have\n[00:00:43.500 --> 00:00:43.910]   applied\n[00:00:43.910 --> 00:00:44.120]  .",
+          "stderr_tail": "... 'tri' library in 0.002 sec\nggml_metal_library_compile_all: compiled 'ssm' library in 0.002 sec\nggml_metal_library_compile_all: compiled 'wkv' library in 0.001 sec\nggml_metal_library_compile_all: compiled 'gated_delta_net' library in 0.001 sec\nggml_metal_library_compile_all: compiled 'solve_tri' library in 0.002 sec\nggml_metal_library_compile_all: compiled 'rope' library in 0.002 sec\nggml_metal_library_compile_all: compiled 'conv' library in 0.014 sec\nggml_metal_library_compile_all: compiled 'upscale' library in 0.001 sec\nggml_metal_library_compile_all: compiled 'argsort' library in 0.015 sec\nggml_metal_library_compile_all: compiled 'pool' library in 0.000 sec\nggml_metal_library_compile_all: compiled 'misc' library in 0.013 sec\nggml_metal_library_compile_all: loaded 20 libraries from embedded data in 0.018 sec (max single = 0.018 sec)\nggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)\nggml_metal_device_init: GPU name:   MTL0 (Apple M1)\nggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)\nggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)\nggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)\nggml_metal_device_init: simdgroup reduction   = true\nggml_metal_device_init: simdgroup matrix mul. = true\nggml_metal_device_init: has unified memory    = true\nggml_metal_device_init: has bfloat            = true\nggml_metal_device_init: has tensor            = false\nggml_metal_device_init: use residency sets    = true\nggml_metal_device_init: use shared buffers    = true\nggml_metal_device_init: recommendedMaxWorkingSetSize  =  5726.63 MB\nload_backend: loaded MTL backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-metal.so\nload_backend: loaded CPU backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-cpu-apple_m1.so\nread_audio_data: reading audio data from '/tmp/phase0/sample.wav' ...\nread_audio_data: trying to decode with miniaudio\noutput_json: saving output to '/tmp/phase0/asr/whispercpp/medium/cpp.json'",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "label": "faster-whisper/medium",
+      "ok": true,
+      "burst_s": 34.412,
+      "sustained_s": 32.251,
+      "peak_rss_mb": 2154.2,
+      "peak_footprint_mb": 1901.0,
+      "swap_delta_mb": -8.0,
+      "repeats": 2,
+      "runs": [
+        {
+          "label": "faster-whisper/medium#0",
+          "wall_s": 34.412,
+          "peak_rss_bytes": 2223095808,
+          "exit_code": 0,
+          "swap_delta_bytes": -142606336,
+          "peak_footprint_bytes": 1992837640,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "/tmp/phase0/asr/faster-whisper/medium/run_faster.py",
+            "medium",
+            "/tmp/phase0/sample.wav",
+            "/tmp/phase0/asr/faster-whisper/medium/faster.json"
+          ],
+          "stdout_tail": "",
+          "stderr_tail": "",
+          "note": ""
+        },
+        {
+          "label": "faster-whisper/medium#1",
+          "wall_s": 32.251,
+          "peak_rss_bytes": 2258845696,
+          "exit_code": 0,
+          "swap_delta_bytes": -8388608,
+          "peak_footprint_bytes": 1993329160,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "/tmp/phase0/asr/faster-whisper/medium/run_faster.py",
+            "medium",
+            "/tmp/phase0/sample.wav",
+            "/tmp/phase0/asr/faster-whisper/medium/faster.json"
+          ],
+          "stdout_tail": "",
+          "stderr_tail": "",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "label": "mlx-whisper/large-v3",
+      "ok": true,
+      "burst_s": 58.329,
+      "sustained_s": 80.378,
+      "peak_rss_mb": 2439.3,
+      "peak_footprint_mb": 5404.4,
+      "swap_delta_mb": 339.2,
+      "repeats": 2,
+      "runs": [
+        {
+          "label": "mlx-whisper/large-v3#0",
+          "wall_s": 58.329,
+          "peak_rss_bytes": 2557837312,
+          "exit_code": 0,
+          "swap_delta_bytes": -316932096,
+          "peak_footprint_bytes": 5666967536,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "-m",
+            "mlx_whisper.cli",
+            "--model",
+            "mlx-community/whisper-large-v3-mlx",
+            "--word-timestamps",
+            "True",
+            "--output-dir",
+            "/tmp/phase0/asr/mlx-whisper/large-v3",
+            "--output-name",
+            "mlx",
+            "--output-format",
+            "json",
+            "--verbose",
+            "False",
+            "/tmp/phase0/sample.wav"
+          ],
+          "stdout_tail": "Detected language: English",
+          "stderr_tail": "Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]\nFetching 4 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4/4 [00:00<00:00, 2266.27it/s]\n\n  0%|          | 0/4436 [00:00<?, ?frames/s]\n 67%|\u2588\u2588\u2588\u2588\u2588\u2588\u258b   | 2956/4436 [00:34<00:17, 86.80frames/s]\n 67%|\u2588\u2588\u2588\u2588\u2588\u2588\u258b   | 2956/4436 [00:46<00:17, 86.80frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [00:51<00:00, 86.30frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [00:51<00:00, 86.40frames/s]",
+          "note": ""
+        },
+        {
+          "label": "mlx-whisper/large-v3#1",
+          "wall_s": 80.378,
+          "peak_rss_bytes": 2451193856,
+          "exit_code": 0,
+          "swap_delta_bytes": 355729408,
+          "peak_footprint_bytes": 5664558968,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "-m",
+            "mlx_whisper.cli",
+            "--model",
+            "mlx-community/whisper-large-v3-mlx",
+            "--word-timestamps",
+            "True",
+            "--output-dir",
+            "/tmp/phase0/asr/mlx-whisper/large-v3",
+            "--output-name",
+            "mlx",
+            "--output-format",
+            "json",
+            "--verbose",
+            "False",
+            "/tmp/phase0/sample.wav"
+          ],
+          "stdout_tail": "Detected language: English",
+          "stderr_tail": "Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]\nFetching 4 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4/4 [00:00<00:00, 2305.51it/s]\n\n  0%|          | 0/4436 [00:00<?, ?frames/s]\n 67%|\u2588\u2588\u2588\u2588\u2588\u2588\u258b   | 2956/4436 [00:29<00:14, 99.04frames/s]\n 67%|\u2588\u2588\u2588\u2588\u2588\u2588\u258b   | 2956/4436 [00:40<00:14, 99.04frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [01:09<00:00, 58.87frames/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 4436/4436 [01:09<00:00, 64.06frames/s]",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "label": "whisper.cpp/large-v3",
+      "ok": true,
+      "burst_s": 38.424,
+      "sustained_s": 55.507,
+      "peak_rss_mb": 3837.5,
+      "peak_footprint_mb": 3984.5,
+      "swap_delta_mb": 132.7,
+      "repeats": 2,
+      "runs": [
+        {
+          "label": "whisper.cpp/large-v3#0",
+          "wall_s": 38.424,
+          "peak_rss_bytes": 3994861568,
+          "exit_code": 0,
+          "swap_delta_bytes": 55574528,
+          "peak_footprint_bytes": 4176727880,
+          "cmd": [
+            "/opt/homebrew/bin/whisper-cli",
+            "-m",
+            "/tmp/phase0/ggml/ggml-large-v3.bin",
+            "-f",
+            "/tmp/phase0/sample.wav",
+            "-oj",
+            "-of",
+            "/tmp/phase0/asr/whispercpp/large-v3/cpp",
+            "--max-len",
+            "1",
+            "-ml",
+            "1",
+            "-np"
+          ],
+          "stdout_tail": "...30.240]   means\n[00:00:30.240 --> 00:00:30.410]   you\n[00:00:30.410 --> 00:00:30.680]   can\n[00:00:30.680 --> 00:00:30.810]   hand\n[00:00:30.810 --> 00:00:31.210]   someone\n[00:00:31.210 --> 00:00:31.260]   a\n[00:00:31.260 --> 00:00:31.650]   link\n[00:00:31.650 --> 00:00:31.890]   instead\n[00:00:31.890 --> 00:00:32.050]   of\n[00:00:32.050 --> 00:00:32.070]   a\n[00:00:32.070 --> 00:00:32.630]   screenshot\n[00:00:32.630 --> 00:00:32.880]  .\n[00:00:32.880 --> 00:00:33.060]   The\n[00:00:33.060 --> 00:00:33.300]   last\n[00:00:33.300 --> 00:00:33.640]   thing\n[00:00:33.640 --> 00:00:33.900]   worth\n[00:00:33.900 --> 00:00:34.510]   mentioning\n[00:00:34.510 --> 00:00:34.630]   is\n[00:00:34.630 --> 00:00:34.810]   the\n[00:00:34.810 --> 00:00:35.240]   export\n[00:00:35.240 --> 00:00:35.570]   button\n[00:00:35.570 --> 00:00:35.670]   in\n[00:00:35.670 --> 00:00:35.850]   the\n[00:00:35.850 --> 00:00:36.030]   top\n[00:00:36.030 --> 00:00:36.330]   right\n[00:00:36.330 --> 00:00:36.700]   corner\n[00:00:36.700 --> 00:00:36.960]  .\n[00:00:37.320 --> 00:00:37.340]   It\n[00:00:37.340 --> 00:00:37.630]   produces\n[00:00:37.630 --> 00:00:37.690]   a\n[00:00:37.690 --> 00:00:38.080]   comma\n[00:00:38.080 --> 00:00:38.090]  -\n[00:00:38.090 --> 00:00:38.220]  se\n[00:00:38.220 --> 00:00:38.420]  par\n[00:00:38.420 --> 00:00:38.690]  ated\n[00:00:38.690 --> 00:00:38.960]   file\n[00:00:38.960 --> 00:00:39.230]   that\n[00:00:39.230 --> 00:00:39.700]   matches\n[00:00:39.700 --> 00:00:40.170]   exactly\n[00:00:40.170 --> 00:00:40.440]   what\n[00:00:40.440 --> 00:00:40.640]   you\n[00:00:40.640 --> 00:00:40.930]   see\n[00:00:40.930 --> 00:00:40.970]   on\n[00:00:40.970 --> 00:00:41.500]   screen\n[00:00:41.500 --> 00:00:41.590]  ,\n[00:00:41.590 --> 00:00:42.110]   including\n[00:00:42.110 --> 00:00:42.310]   any\n[00:00:42.310 --> 00:00:42.980]   filters\n[00:00:42.980 --> 00:00:42.990]   you\n[00:00:42.990 --> 00:00:43.250]   have\n[00:00:43.250 --> 00:00:43.720]   applied\n[00:00:43.720 --> 00:00:44.040]  .",
+          "stderr_tail": "...tri' library in 0.039 sec\nggml_metal_library_compile_all: compiled 'ssm' library in 0.052 sec\nggml_metal_library_compile_all: compiled 'wkv' library in 0.050 sec\nggml_metal_library_compile_all: compiled 'gated_delta_net' library in 0.053 sec\nggml_metal_library_compile_all: compiled 'solve_tri' library in 0.053 sec\nggml_metal_library_compile_all: compiled 'rope' library in 0.052 sec\nggml_metal_library_compile_all: compiled 'conv' library in 0.050 sec\nggml_metal_library_compile_all: compiled 'upscale' library in 0.044 sec\nggml_metal_library_compile_all: compiled 'argsort' library in 0.044 sec\nggml_metal_library_compile_all: compiled 'pool' library in 0.044 sec\nggml_metal_library_compile_all: compiled 'misc' library in 0.049 sec\nggml_metal_library_compile_all: loaded 20 libraries from embedded data in 0.053 sec (max single = 0.053 sec)\nggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)\nggml_metal_device_init: GPU name:   MTL0 (Apple M1)\nggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)\nggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)\nggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)\nggml_metal_device_init: simdgroup reduction   = true\nggml_metal_device_init: simdgroup matrix mul. = true\nggml_metal_device_init: has unified memory    = true\nggml_metal_device_init: has bfloat            = true\nggml_metal_device_init: has tensor            = false\nggml_metal_device_init: use residency sets    = true\nggml_metal_device_init: use shared buffers    = true\nggml_metal_device_init: recommendedMaxWorkingSetSize  =  5726.63 MB\nload_backend: loaded MTL backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-metal.so\nload_backend: loaded CPU backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-cpu-apple_m1.so\nread_audio_data: reading audio data from '/tmp/phase0/sample.wav' ...\nread_audio_data: trying to decode with miniaudio\noutput_json: saving output to '/tmp/phase0/asr/whispercpp/large-v3/cpp.json'",
+          "note": ""
+        },
+        {
+          "label": "whisper.cpp/large-v3#1",
+          "wall_s": 55.507,
+          "peak_rss_bytes": 4023861248,
+          "exit_code": 0,
+          "swap_delta_bytes": 139125064,
+          "peak_footprint_bytes": 4178005880,
+          "cmd": [
+            "/opt/homebrew/bin/whisper-cli",
+            "-m",
+            "/tmp/phase0/ggml/ggml-large-v3.bin",
+            "-f",
+            "/tmp/phase0/sample.wav",
+            "-oj",
+            "-of",
+            "/tmp/phase0/asr/whispercpp/large-v3/cpp",
+            "--max-len",
+            "1",
+            "-ml",
+            "1",
+            "-np"
+          ],
+          "stdout_tail": "...30.240]   means\n[00:00:30.240 --> 00:00:30.410]   you\n[00:00:30.410 --> 00:00:30.680]   can\n[00:00:30.680 --> 00:00:30.810]   hand\n[00:00:30.810 --> 00:00:31.210]   someone\n[00:00:31.210 --> 00:00:31.260]   a\n[00:00:31.260 --> 00:00:31.650]   link\n[00:00:31.650 --> 00:00:31.890]   instead\n[00:00:31.890 --> 00:00:32.050]   of\n[00:00:32.050 --> 00:00:32.070]   a\n[00:00:32.070 --> 00:00:32.630]   screenshot\n[00:00:32.630 --> 00:00:32.880]  .\n[00:00:32.880 --> 00:00:33.060]   The\n[00:00:33.060 --> 00:00:33.300]   last\n[00:00:33.300 --> 00:00:33.640]   thing\n[00:00:33.640 --> 00:00:33.900]   worth\n[00:00:33.900 --> 00:00:34.510]   mentioning\n[00:00:34.510 --> 00:00:34.630]   is\n[00:00:34.630 --> 00:00:34.810]   the\n[00:00:34.810 --> 00:00:35.240]   export\n[00:00:35.240 --> 00:00:35.570]   button\n[00:00:35.570 --> 00:00:35.670]   in\n[00:00:35.670 --> 00:00:35.850]   the\n[00:00:35.850 --> 00:00:36.030]   top\n[00:00:36.030 --> 00:00:36.330]   right\n[00:00:36.330 --> 00:00:36.700]   corner\n[00:00:36.700 --> 00:00:36.960]  .\n[00:00:37.320 --> 00:00:37.340]   It\n[00:00:37.340 --> 00:00:37.630]   produces\n[00:00:37.630 --> 00:00:37.690]   a\n[00:00:37.690 --> 00:00:38.080]   comma\n[00:00:38.080 --> 00:00:38.090]  -\n[00:00:38.090 --> 00:00:38.220]  se\n[00:00:38.220 --> 00:00:38.420]  par\n[00:00:38.420 --> 00:00:38.690]  ated\n[00:00:38.690 --> 00:00:38.960]   file\n[00:00:38.960 --> 00:00:39.230]   that\n[00:00:39.230 --> 00:00:39.700]   matches\n[00:00:39.700 --> 00:00:40.170]   exactly\n[00:00:40.170 --> 00:00:40.440]   what\n[00:00:40.440 --> 00:00:40.640]   you\n[00:00:40.640 --> 00:00:40.930]   see\n[00:00:40.930 --> 00:00:40.970]   on\n[00:00:40.970 --> 00:00:41.500]   screen\n[00:00:41.500 --> 00:00:41.590]  ,\n[00:00:41.590 --> 00:00:42.110]   including\n[00:00:42.110 --> 00:00:42.310]   any\n[00:00:42.310 --> 00:00:42.980]   filters\n[00:00:42.980 --> 00:00:42.990]   you\n[00:00:42.990 --> 00:00:43.250]   have\n[00:00:43.250 --> 00:00:43.720]   applied\n[00:00:43.720 --> 00:00:44.040]  .",
+          "stderr_tail": "...tri' library in 0.050 sec\nggml_metal_library_compile_all: compiled 'ssm' library in 0.006 sec\nggml_metal_library_compile_all: compiled 'wkv' library in 0.048 sec\nggml_metal_library_compile_all: compiled 'gated_delta_net' library in 0.049 sec\nggml_metal_library_compile_all: compiled 'solve_tri' library in 0.049 sec\nggml_metal_library_compile_all: compiled 'rope' library in 0.049 sec\nggml_metal_library_compile_all: compiled 'conv' library in 0.007 sec\nggml_metal_library_compile_all: compiled 'upscale' library in 0.048 sec\nggml_metal_library_compile_all: compiled 'argsort' library in 0.049 sec\nggml_metal_library_compile_all: compiled 'pool' library in 0.049 sec\nggml_metal_library_compile_all: compiled 'misc' library in 0.049 sec\nggml_metal_library_compile_all: loaded 20 libraries from embedded data in 0.050 sec (max single = 0.050 sec)\nggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)\nggml_metal_device_init: GPU name:   MTL0 (Apple M1)\nggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)\nggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)\nggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)\nggml_metal_device_init: simdgroup reduction   = true\nggml_metal_device_init: simdgroup matrix mul. = true\nggml_metal_device_init: has unified memory    = true\nggml_metal_device_init: has bfloat            = true\nggml_metal_device_init: has tensor            = false\nggml_metal_device_init: use residency sets    = true\nggml_metal_device_init: use shared buffers    = true\nggml_metal_device_init: recommendedMaxWorkingSetSize  =  5726.63 MB\nload_backend: loaded MTL backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-metal.so\nload_backend: loaded CPU backend from /opt/homebrew/Cellar/ggml/0.22.0/libexec/libggml-cpu-apple_m1.so\nread_audio_data: reading audio data from '/tmp/phase0/sample.wav' ...\nread_audio_data: trying to decode with miniaudio\noutput_json: saving output to '/tmp/phase0/asr/whispercpp/large-v3/cpp.json'",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "label": "faster-whisper/large-v3",
+      "ok": true,
+      "burst_s": 82.279,
+      "sustained_s": 377.894,
+      "peak_rss_mb": 2994.8,
+      "peak_footprint_mb": 3446.6,
+      "swap_delta_mb": 361.9,
+      "repeats": 2,
+      "runs": [
+        {
+          "label": "faster-whisper/large-v3#0",
+          "wall_s": 82.279,
+          "peak_rss_bytes": 3140288512,
+          "exit_code": 0,
+          "swap_delta_bytes": -76546048,
+          "peak_footprint_bytes": 3614068336,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "/tmp/phase0/asr/faster-whisper/large-v3/run_faster.py",
+            "large-v3",
+            "/tmp/phase0/sample.wav",
+            "/tmp/phase0/asr/faster-whisper/large-v3/faster.json"
+          ],
+          "stdout_tail": "",
+          "stderr_tail": "",
+          "note": ""
+        },
+        {
+          "label": "faster-whisper/large-v3#1",
+          "wall_s": 377.894,
+          "peak_rss_bytes": 2941829120,
+          "exit_code": 0,
+          "swap_delta_bytes": 379521597,
+          "peak_footprint_bytes": 3605106216,
+          "cmd": [
+            "/Users/sachinkoli/github/screencut/.venv-asr/bin/python",
+            "/tmp/phase0/asr/faster-whisper/large-v3/run_faster.py",
+            "large-v3",
+            "/tmp/phase0/sample.wav",
+            "/tmp/phase0/asr/faster-whisper/large-v3/faster.json"
+          ],
+          "stdout_tail": "",
+          "stderr_tail": "",
+          "note": ""
+        }
+      ]
+    }
+  ]
+}

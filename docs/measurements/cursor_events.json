@@ -1,0 +1,95 @@
+{
+  "host": {
+    "cpu": "Apple M1",
+    "cores": "8",
+    "memory_gb": 8.0,
+    "os": "Darwin 27.0",
+    "arch": "arm64",
+    "python": "3.12.0",
+    "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "measured_at": "2026-08-30"
+  },
+  "recorder": "Cap",
+  "recording": "BenQ GW2790QT (Display) 2026-08-30 07.07 PM.cap",
+  "extractable": true,
+  "format": {
+    "cursor_file": "content/segments/segment-0/cursor.json",
+    "top_level_keys": [
+      "clicks",
+      "moves"
+    ],
+    "move_fields": [
+      "active_modifiers",
+      "cursor_id",
+      "time_ms",
+      "x",
+      "y"
+    ],
+    "click_fields": [
+      "active_modifiers",
+      "cursor_id",
+      "cursor_num",
+      "down",
+      "time_ms"
+    ],
+    "example_move": {
+      "active_modifiers": [],
+      "cursor_id": "1",
+      "time_ms": 1262.930291,
+      "x": 0.08046875,
+      "y": 0.5347222222222222
+    },
+    "example_click": {
+      "active_modifiers": [],
+      "cursor_num": 1,
+      "cursor_id": "0",
+      "time_ms": 839.620958,
+      "down": true
+    }
+  },
+  "coordinate_space": {
+    "normalized_0_1": true,
+    "x_range": [
+      0.0375,
+      0.5781
+    ],
+    "y_range": [
+      0.2083,
+      0.7986
+    ],
+    "matches_focustrack_space": true
+  },
+  "sample_rate": {
+    "count": 151,
+    "mean_hz": 16.96,
+    "median_hz": 37.32,
+    "min_gap_ms": 22.39,
+    "max_gap_ms": 1980.85,
+    "p95_gap_ms": 111.21
+  },
+  "clicks": {
+    "count": 5,
+    "down_events": 3,
+    "carries_position": false,
+    "nearest_move_sample_ms": 423.31
+  },
+  "time_base": {
+    "cursor_units": "time_ms, milliseconds",
+    "display_start_time_s": 0.194069708,
+    "cursor_clock_is_recording_not_video": true
+  },
+  "video": {
+    "path": "content/segments/segment-0/display.mp4",
+    "width": 2560,
+    "height": 1440,
+    "duration_s": 10.0623,
+    "stream_fps": 59.0,
+    "metadata_fps": 25,
+    "fps_metadata_disagrees_with_stream": true
+  },
+  "also_present": {
+    "keyboard_events": true,
+    "cursor_images_with_hotspots": true,
+    "segments": 1
+  }
+}

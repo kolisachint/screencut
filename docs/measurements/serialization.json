@@ -1,0 +1,38 @@
+{
+  "host": {
+    "cpu": "Apple M1",
+    "cores": "8",
+    "memory_gb": 8.0,
+    "os": "Darwin 27.0",
+    "arch": "arm64",
+    "python": "3.12.0",
+    "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "measured_at": "2026-08-30"
+  },
+  "baseline_swap_mb": 5369.9,
+  "serial": {
+    "ok": false,
+    "transcribe_peak_rss_mb": 578.2,
+    "synthesize_peak_rss_mb": 2711.7,
+    "max_concurrent_rss_mb": 2711.7,
+    "wall_s": 137.44,
+    "swap_delta_mb": 440.4,
+    "errors": [
+      "ocess/resource_tracker.py\", line 80, in __del__\n  File \"/Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/multiprocess/resource_tracker.py\", line 89, in _stop\n  File \"/Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/multiprocess/resource_tracker.py\", line 102, in _stop_locked\nAttributeError: '_thread.RLock' object has no attribute '_recursion_count'"
+    ]
+  },
+  "resident": {
+    "ok": false,
+    "peak_rss_mb": 1508.8,
+    "wall_s": 88.009,
+    "swap_delta_mb": 2869.4,
+    "transcribe_s": 68.954,
+    "synthesize_s": null,
+    "error": "h}\") from e\nOSError: Could not load this library: /Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.dylib\n[end of libtorchcodec loading traceback].\nException ignored in: <function ResourceTracker.__del__ at 0x71647a1da0>\nTraceback (most recent call last):\n  File \"/Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/multiprocess/resource_tracker.py\", line 80, in __del__\n  File \"/Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/multiprocess/resource_tracker.py\", line 89, in _stop\n  File \"/Users/sachinkoli/github/screencut/.venv-asr/lib/python3.12/site-packages/multiprocess/resource_tracker.py\", line 102, in _stop_locked\nAttributeError: '_thread.RLock' object has no attribute '_recursion_count'"
+  },
+  "verdict": {
+    "resident_peak_over_serial_mb": -1202.9,
+    "resident_swapped": true,
+    "serialization_required": true
+  }
+}
