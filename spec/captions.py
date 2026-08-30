@@ -19,16 +19,24 @@ from spec.types import TIME_EPS, Seconds, SpecModel, TimeSpan
 
 
 class Word(SpecModel, TimeSpan):
-    """One spoken word with its alignment window.
+    """One spoken word with its timing window.
 
     `emphasis` is the only model-written field in the caption subtree (§7.1:
     emphasis selection is taste, timing and layout are not) — which is exactly
     the mixed-origin case §11.1's per-field metadata exists for.
+
+    The timings say `transcribe` because that is what writes them: §5.3's *two*
+    ASR calls are two calls of the same thing, and open transcription of the
+    recording's own audio is the one that exists. `align` writes this same field
+    on the TTS path in phase 8, against a script it already knows. Both are
+    deterministic (`spec/origin.py`), so §11.1 checks the field identically
+    whichever produced it — which is why one origin can be named honestly rather
+    than the field needing two.
     """
 
-    t_in: Seconds = spec_field(produced_by=Stage.ALIGN)
-    t_out: Seconds = spec_field(produced_by=Stage.ALIGN)
-    text: Annotated[str, Field(min_length=1)] = spec_field(produced_by=Stage.ALIGN)
+    t_in: Seconds = spec_field(produced_by=Stage.TRANSCRIBE)
+    t_out: Seconds = spec_field(produced_by=Stage.TRANSCRIBE)
+    text: Annotated[str, Field(min_length=1)] = spec_field(produced_by=Stage.TRANSCRIBE)
     emphasis: bool = spec_field(default=False, produced_by=Stage.EMPHASIS)
 
     @model_validator(mode="after")

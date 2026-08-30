@@ -1,7 +1,9 @@
 # screencut — see docs/architecture.md and docs/implementation-phases.md.
-.PHONY: help install schema types generated check-generated typecheck test fixture run broken check clean
+.PHONY: help install schema types generated check-generated typecheck test fixture run take broken check clean
 
 FIXTURE ?= data/fixtures/demo01
+CAP ?= data/fixtures/take01.cap
+JOB ?= data/jobs/take01
 ENCODER ?= software
 
 help:
@@ -34,6 +36,11 @@ fixture:  ## Generate the synthetic fixture job, source video included.
 
 run: fixture  ## Run the fixture job through the pipeline. ENCODER=videotoolbox on macOS.
 	python3 -m runner.cli run $(FIXTURE) --encoder $(ENCODER)
+
+take:  ## Cap-format take -> job -> both renders. Needs whisper-cli + weights (see AGENTS.md).
+	python3 -m ingest.cap_fixture --out $(CAP)
+	python3 -m runner.cli ingest $(CAP) --out $(JOB)
+	python3 -m runner.cli run $(JOB) --encoder $(ENCODER)
 
 broken:  ## Run the deliberately bad fixture, so §9.1's checks are seen firing.
 	python3 -m ingest.fixtures --out data/fixtures/broken01 --job-id fixture --broken

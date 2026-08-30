@@ -8,7 +8,7 @@ which drifts from the first, and the drifted one is always the one being read.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +21,22 @@ CONSTRAINTS_PATH = Path(__file__).resolve().parent / "constraints.yaml"
 class CaptionConstraints(BaseModel):
     model_config = ConfigDict(extra="forbid")
     font_family: str | None = None
+
+
+class AsrConstraints(BaseModel):
+    """Which ASR runs, and where its weights are.
+
+    `backend` is a single fixed value rather than a choice: phase 0 measured the
+    alternatives and only this one has a parser written against output somebody
+    has seen (`synth/asr.py`). It is spelled out anyway so a future second backend
+    is a value change here rather than an archaeology exercise."""
+
+    model_config = ConfigDict(extra="forbid")
+    backend: Literal["whisper.cpp"] = "whisper.cpp"
+    model: str = "large-v3"
+    binary: str = "whisper-cli"
+    models_dir: str = "~/.cache/screencut/whisper"
+    language: str = "en"
 
 
 class VoiceConstraints(BaseModel):
@@ -39,6 +55,7 @@ class Constraints(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     captions: CaptionConstraints = Field(default_factory=CaptionConstraints)
+    asr: AsrConstraints = Field(default_factory=AsrConstraints)
     voice: VoiceConstraints = Field(default_factory=VoiceConstraints)
     encode: EncodeConstraints = Field(default_factory=EncodeConstraints)
     profiles: dict[str, dict[str, Any]] = Field(

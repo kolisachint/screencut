@@ -577,22 +577,27 @@ export interface Source {
 export type Tier = "essential" | "supporting" | "optional";
 
 /**
- * One spoken word with its alignment window. `emphasis` is the only model-written
- * field in the caption subtree (§7.1: emphasis selection is taste, timing and layout
- * are not) — which is exactly the mixed-origin case §11.1's per-field metadata exists
- * for.
+ * One spoken word with its timing window. `emphasis` is the only model-written field
+ * in the caption subtree (§7.1: emphasis selection is taste, timing and layout are
+ * not) — which is exactly the mixed-origin case §11.1's per-field metadata exists for.
+ * The timings say `transcribe` because that is what writes them: §5.3's *two* ASR
+ * calls are two calls of the same thing, and open transcription of the recording's own
+ * audio is the one that exists. `align` writes this same field on the TTS path in
+ * phase 8, against a script it already knows. Both are deterministic
+ * (`spec/origin.py`), so §11.1 checks the field identically whichever produced it —
+ * which is why one origin can be named honestly rather than the field needing two.
  */
 export interface Word {
   /**
-   * @producedBy align (deterministic)
+   * @producedBy transcribe (deterministic)
    */
   t_in: number;
   /**
-   * @producedBy align (deterministic)
+   * @producedBy transcribe (deterministic)
    */
   t_out: number;
   /**
-   * @producedBy align (deterministic)
+   * @producedBy transcribe (deterministic)
    */
   text: string;
   /**

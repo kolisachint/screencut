@@ -1,10 +1,13 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 3 built, plus §9.1's deterministic checks (`verify/`) pulled forward
-from phase 6 — the spec (`spec/`), the fixture generator (`ingest/`), `plan_focus`
-(`plan/`), the FFmpeg compiler (`compile/`), and the runner, cache and job record
-(`runner/`). `screencut run <job>` renders a job to every profile, skips whatever the cache
-already holds, and verifies each render. Real media and every model stage are ahead. See
+Status: phases 1 to 4 built, plus §9.1's deterministic checks (`verify/`) pulled forward
+from phase 6 — the spec (`spec/`), the Cap adapter and fixture generators (`ingest/`),
+`plan_focus` and `plan_captions` (`plan/`), open transcription (`synth/`), the FFmpeg
+compiler (`compile/`), and the runner, cache and job record (`runner/`). `screencut ingest
+<take>.cap --out <job>` turns a recorder bundle into a job; `screencut run <job>` renders
+it to every profile, skips whatever the cache already holds, and verifies each render.
+Every model stage is ahead, and so is the first *real* recording — phase 4 built the path
+but could not record a take on the machine that built it. See
 [`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is
@@ -350,6 +353,12 @@ open transcription.
 **`verify`** runs **open transcription** on the *final rendered audio* and diffs against the
 script. Same library, opposite purpose: one produces timings, the other independently
 checks that the render did not lie.
+
+There is a third call, and phase 4 is where it appeared: **`transcribe`** runs open
+transcription on the *source* audio, which is what a recording narrated in your own voice
+needs and what `align` cannot do, having no script to align to. It lives in `synth/asr.py`
+beside where `align` will; keeping them separate modules producing separate artifacts is
+this section's warning made structural rather than restated.
 
 ### 5.4 Persistence
 
@@ -738,7 +747,7 @@ rather than only known-good.
 ```
 screencut/
   spec/         Pydantic models, JSON Schema emit, migrations
-  ingest/       Recorder adapters -> RawTake; synthetic fixture generator
+  ingest/       Recorder adapters -> Source + FocusTrack; synthetic fixture generators
   plan/         Deterministic planners; LLM planners
   synth/        TTS and ASR stages (CLI contracts)
   compile/      EditSpec + RenderProfile -> FFmpeg graph; MLT export; MLT re-ingest

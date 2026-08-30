@@ -12,7 +12,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from prefs import resolve_profile
+from prefs import load_constraints, resolve_profile
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
 from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
@@ -20,8 +20,18 @@ from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
 from runner import db
 from runner.cache import cache_key
 from runner.contract import StageRequest
+from runner.job import JobConfig
 from runner.local import LocalRunner
-from runner.stages import INPUT_NAMES, ORDER, STAGES, StageContext
+from runner.stages import (
+    INPUT_NAMES,
+    JOB_INPUT_NAMES,
+    JOB_ORDER,
+    JOB_STAGES,
+    ORDER,
+    STAGES,
+    JobContext,
+    StageContext,
+)
 from verify.report import VerificationReport
 
 
@@ -81,6 +91,13 @@ def run_job(
             spec_version=spec.spec_version,
             status="running",
         )
+        # The job-level stages first and in full, because they rewrite `spec.json`
+        # and every per-profile fingerprint is taken from the spec. Interleaving
+        # them would have `compile` hash a document that changed after it looked.
+        resolved = tuple(
+            name if isinstance(name, RenderProfile) else resolve_profile(name) for name in names
+        )
+        spec = _run_job_stages(run, connection, spec, resolved, job_dir, runner, force)
         for name in names:
             # A name goes through `constraints.yaml`; a profile object arrives already
             # resolved. The review UI will pass the second kind, since "make the short
@@ -95,6 +112,93 @@ def run_job(
             status="rendered" if run.verified else "failed_verification",
         )
     return run
+
+
+def _run_job_stages(
+    run: JobRun,
+    connection,
+    spec: EditSpec,
+    profiles: tuple[RenderProfile, ...],
+    job_dir: Path,
+    runner: LocalRunner,
+    force: bool,
+) -> EditSpec:
+    """Run what `job.json` asks for, once, and fold the results into the spec.
+
+    Returns the spec the per-profile stages will render. A job directory with no
+    `job.json` — every fixture in this repository — asks for nothing and gets its
+    spec back untouched, which is why adding this group broke no existing job.
+    """
+    wanted = set(JobConfig.load(job_dir).stages)
+    if not wanted:
+        return spec
+
+    context = JobContext(
+        spec=spec, profiles=profiles, job_dir=job_dir, constraints=load_constraints()
+    )
+    keys: dict[str, str] = {}
+    paths: dict[str, str] = {}
+    applied = False
+
+    for name in JOB_ORDER:
+        if name not in wanted:
+            continue
+        stage = JOB_STAGES[name]
+        key = cache_key(
+            stage=stage.name,
+            stage_version=stage.version,
+            inputs={
+                "self": stage.fingerprint(context),
+                "upstream": {dependency: keys[dependency] for dependency in stage.depends_on},
+            },
+            params={},
+            model_backed=stage.model_backed,
+        )
+        keys[name] = key
+        artifact = Path("stages") / f"{key}{stage.suffix}"
+        paths[name] = str(artifact)
+
+        cached = _is_cached(connection, key, job_dir / artifact, stage.directory) and not force
+        if not cached:
+            request = StageRequest(
+                stage=name,
+                job_dir=str(job_dir),
+                inputs={
+                    "spec": "spec.json",
+                    **{
+                        JOB_INPUT_NAMES[dependency]: paths[dependency]
+                        for dependency in stage.depends_on
+                    },
+                },
+                params={
+                    "asr": context.constraints.asr.model_dump(mode="json"),
+                    "profiles": [p.model_dump(mode="json") for p in profiles],
+                },
+                output=str(artifact),
+            )
+            runner.run(request, holds_local_weights=stage.holds_local_weights)
+            db.record_artifact(
+                connection,
+                cache_key=key,
+                job_id=spec.job_id,
+                stage=name,
+                stage_version=stage.version,
+                profile="-",
+                path=str(artifact),
+            )
+        run.outcomes.append(
+            StageOutcome(stage=name, profile="job", cache_key=key, path=str(artifact), cached=cached)
+        )
+        if stage.apply is not None:
+            spec = stage.apply(spec, job_dir / artifact)
+            applied = True
+
+    if applied:
+        # Written back because principle 1 is that the spec is the system: review,
+        # verification and golden replay all read `spec.json`, and a caption list
+        # that lived only in `stages/` would be invisible to every one of them.
+        (job_dir / "spec.json").write_text(spec.model_dump_json(indent=2) + "\n")
+    return spec
 
 
 def _run_profile(

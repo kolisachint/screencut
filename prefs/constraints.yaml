@@ -13,6 +13,19 @@ captions:
   # libass resolves this through fontconfig and substitutes if it is missing.
   font_family: Inter
 
+asr:
+  # Phase 0 ran all three candidates on the target machine at two sizes each and
+  # whisper.cpp won both (environment findings §3): fastest, and the only one
+  # whose footprint tracks its RSS, so the 8GB budget is predictable rather than
+  # discovered by swapping. `large-v3` is 1.95x realtime at 3 984 MB; `medium` is
+  # the documented fallback when memory is contended — 5x realtime for a WER cost
+  # that is real but small.
+  backend: whisper.cpp
+  model: large-v3
+  binary: whisper-cli
+  models_dir: ~/.cache/screencut/whisper
+  language: en
+
 voice:
   # Decision #20. Synthesis is permitted only of you, from a per-job reference
   # you explicitly recorded; the schema enforces the second half (spec/narration.py).

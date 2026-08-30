@@ -52,7 +52,7 @@ def verify_render(
     findings += check_captions(timeline, profile)
     findings += check_crop_continuity(focus, profile)
     findings += check_edit_integrity(spec, timeline)
-    findings += check_budget(timeline, profile)
+    findings += check_budget(timeline, profile, spec)
     findings += check_cuts_land_between_words(spec)
     findings += check_trim_composition(spec)
     if assets is not None:
@@ -321,10 +321,27 @@ def check_edit_integrity(spec: EditSpec, timeline: EditedTimeline) -> list[Findi
     return findings
 
 
-def check_budget(timeline: EditedTimeline, profile: RenderProfile) -> list[Finding]:
+def check_budget(
+    timeline: EditedTimeline, profile: RenderProfile, spec: EditSpec | None = None
+) -> list[Finding]:
     """`essential` alone overrunning is the expected way a profile fails (§4.4.1),
-    and it is reported with the overrun in seconds rather than rendering long."""
+    and it is reported with the overrun in seconds rather than rendering long.
+
+    Before anything has proposed an edit there is nothing to have cut *with*, and
+    a raw take meets a 15s budget only by luck. Reported then, but as a warning:
+    a check that fails on every correct job in a phase gets ignored within a week,
+    and phase 5's `trim` is the thing that answers it.
+    """
     if timeline.budget_overrun > TIME_EPS:
+        if spec is not None and not spec.edit.segments and not spec.edit.removals:
+            return [Finding(
+                check="budget", severity=Severity.WARN,
+                message=(
+                    f"the whole take runs {timeline.budget_overrun:.2f}s over the "
+                    f"{profile.duration_budget:g}s budget; nothing has proposed an edit yet"
+                ),
+                value=timeline.budget_overrun, limit=0.0,
+            )]
         return [_fail("budget",
                       f"{timeline.threshold.value} alone runs {timeline.budget_overrun:.2f}s over "
                       f"the {profile.duration_budget:g}s budget",

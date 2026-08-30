@@ -17,12 +17,19 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 3 are built, plus §9.1's deterministic checks.** The data model
+**Phases 1 to 4 are built, plus §9.1's deterministic checks.** The data model
 everything else is written against; the compiler that turns it into video —
 `plan_focus`, the time projection, ASS captions, SVG overlays, an FFmpeg graph
 rendering one spec to two aspect ratios at two different lengths; the runner that
 makes re-running cheap; and verification that reads the render back and reports
 what is wrong with it.
+
+**Phase 4 built the ingest path but has not met a real recording.** The Cap
+adapter, the `transcribe` stage and `plan_captions` are in, and a recorder bundle
+goes to two renders in one command — but the take it has been run against is a
+synthetic bundle in Cap's format, because recording a real one needs a screen, a
+microphone and Cap on the machine doing the work. The phase-2 tunables are still
+waiting for real footage.
 
 **Phase 0 has been run** on the target machine — a base-model M1 MacBook Air,
 8GB, fanless. Its four verdicts are in
@@ -38,14 +45,17 @@ numbers under `docs/measurements/` and the harness in `tools/`:
 - **The agent CLI round-trips a schema** — 12/12 valid, though 11/12 arrive
   wrapped in a code fence, and latency runs 6–66 s per call.
 
-Next is phase 4 — real ingest and transcription, and the first output worth
-posting. Both of the things it was waiting on now exist.
+Next is a real take — record one, run it, and retune — and then phase 5, the
+editorial pass, where `trim` and `plan_edit` make this an editing tool rather than
+a captioning one.
 
 ## Quickstart
 
 ```sh
 make install     # the package and its dev dependencies
 make run         # a synthetic job through the whole pipeline (needs ffmpeg)
+make take        # a Cap-format take: generate it, ingest it, render it
+                 # (needs whisper-cli and its weights; the others do not)
 make broken      # the deliberately bad fixture, so the checks are seen firing
 make check       # tests, generated-artifact drift, TypeScript typecheck
 ```

@@ -3,8 +3,9 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phase 0 has been run and phases 1 to 3 are built, with phase 6's deterministic layer among
-them. Its measured results are in [`environment-findings.md`](environment-findings.md), and
+Phase 0 has been run and phases 1 to 4 are built, with phase 6's deterministic layer among
+them — phase 4 less the real take it cannot record here, which is written up in its own
+section. Its measured results are in [`environment-findings.md`](environment-findings.md), and
 phases 4, 5 and 8 should be read alongside it. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
@@ -116,7 +117,8 @@ someone concludes the compiler is broken.
 which `runner/stages.py` uses, so twenty tests fail with `Option not found`. The
 replacement `-/filter_complex` is verified working here but is not applied — this phase
 excludes pipeline code, and the swap needs a version guard since the new syntax predates
-neither FFmpeg 7 nor the old option's removal cleanly. **Phase 4 should fix this first.**
+neither FFmpeg 7 nor the old option's removal cleanly. **Phase 4 fixed this first**, as a
+capability probe rather than a version comparison (`compile/ffmpeg.py`).
 On a clean macOS box today no single FFmpeg has both libass and
 `-filter_complex_script`, so this is not optional maintenance.
 
@@ -260,7 +262,7 @@ copies of everything.
 
 ---
 
-## Phase 4 — Real ingest and transcription ★
+## Phase 4 — Real ingest and transcription ★ — **built, less the real take**
 
 **★ First genuinely useful output.** A real recording in, a captioned auto-zoomed 9:16
 short and 16:9 demo out, narrated by your own voice — with no TTS anywhere in the path.
@@ -278,13 +280,100 @@ short and 16:9 demo out, narrated by your own voice — with no TTS anywhere in 
 
 **Exit criteria**
 
-- A real recording produces both renders, unattended, from one command.
+- A real recording produces both renders, unattended, from one command. — **met for a
+  Cap-format recording, not a real one.** `screencut ingest <take>.cap --out <job>` then
+  `screencut run <job>` (or `make take`) produces both, unattended, from a bundle in Cap's
+  own format. No real take could be recorded here; see *How it came out*.
 - Zoom behaviour on real cursor data is sane — this is the first test of the phase-2
-  tunables against reality, and expect to retune them.
+  tunables against reality, and expect to retune them. — **open.** Sane on the fixture's
+  cursor data, which is the fixture's data. The tunables have not met reality.
 - The output is something you would actually post. If it is not, stop and fix that before
-  continuing; every later phase assumes this baseline is good.
+  continuing; every later phase assumes this baseline is good. — **open**, and for the
+  same reason. Nothing has been posted, because nothing real has been recorded.
 
 **Not in this phase:** synthesized voice, cuts, verification, review UI.
+
+**How it came out.** Everything phase 0 unblocked got built, and the one thing it could
+not unblock is the one thing still open: **no real take was promoted into `golden/`,**
+because recording one needs a screen, a microphone and Cap on the machine doing the work.
+Read the exit criteria against that. What runs instead is `ingest/cap_fixture.py`, a
+bundle written in Cap's own on-disk format carrying every trap phase 0 measured at or
+beyond the measured severity — a 3.6 s rest gap against the real take's 1.98 s worst case,
+clicks landing inside those gaps with no position of their own, the 0.194 s clock offset,
+and a sidecar claiming an fps the stream does not have. A fixture whose traps are gentler
+than reality passes while the adapter is broken, so these are not.
+
+**The first thing was the FFmpeg option, exactly as phase 0 said.** It came out as a
+**capability probe rather than a version comparison**, and that was the decision inside
+the ten lines. Version strings are a proxy for the thing that changed — distribution
+builds carry suffixes, git builds report `N-109848-g0d1c2c9c1a` and no number at all —
+while `-h full` either lists `-filter_complex_script` or does not, which is the question.
+Asking the binary cannot guess wrong. The second half is less obvious: `compile` writes
+the whole FFmpeg command into its manifest and `render` replays it, so a cached compile
+plus a toolchain upgrade replays an option that no longer exists. The option belongs to
+the binary, so `render` rewrites it and `render`'s cache key carries it.
+
+**Reading absence as dwell turned out to need no new dwell rule.** Phase 0 sharpened the
+known trap into "dwell is invisible, not mismeasured", which sounds like it wants a
+special case. It does not: resampling onto a fixed grid and *holding* position across a
+gap — rather than interpolating a glide that never happened — turns absence into a run of
+identical samples, which is what the existing classifier already reads as dwell. One rule,
+reached two ways. The four rest gaps in the fixture produce exactly four zoom regions,
+each starting the moment the cursor stops.
+
+**One caption list, sized against the tightest profile.** §4.1 has one `EditSpec` serving
+N profiles and `EditSpec.captions` is part of that document, so "profile-aware line
+breaking" cannot mean one list per profile. Wrapping is already per profile in
+`compile/captions.py`; what `plan_captions` decides is where a block ends, and sizing that
+against the narrowest box is the only answer that is one list. Blocks break on sentence
+endings first, pauses second, capacity last — capacity being the fallback is the point,
+because a block split only on capacity reads as cut mid-thought.
+
+**`transcribe` and `plan_captions` are the first stages that are not per profile.** What
+was said does not depend on the shape it will be rendered into, and running ASR twice for
+two profiles is 23 seconds thrown away per run on the target machine. They run once per
+job, ahead of the per-profile group and not interleaved with it, because they rewrite
+`spec.json` and every per-profile fingerprint is taken from the spec. `transcribe` is also
+the first stage to set `holds_local_weights`, which `runner/stages.py` predicted it would
+be.
+
+**Whether a job wants those stages is not in the spec, and it cannot be.** `captions: []`
+means "not planned yet" in an ingested job and "this take is silent" in the next one, and
+nothing in the document distinguishes them — a fixture with hand-authored captions would
+be transcribed over. So `job.json` says: pipeline configuration for one run, beside
+`spec.json` rather than inside it. A job directory without one is a job whose spec is
+complete as given, which is every fixture in this repository, which is why adding a whole
+stage group broke none of them.
+
+**Two bugs, both found by running the first job that was not the synthetic fixture.**
+
+An ingested take has no overlays yet, and in zoom mode that leaves the `sendcmd` script
+empty — FFmpeg does not ignore a `sendcmd` with nothing to send, it refuses the graph with
+"No commands were specified" and exits. The synthetic fixture always has overlays and
+music, so the path had never run. Both `sendcmd` and `asendcmd` are now omitted when there
+is nothing to send.
+
+And §9.1's budget check failed every phase-4 job, correctly and uselessly: a 24 s take
+against a 15 s budget overruns, and before `plan_edit` exists there is nothing to have cut
+with. A check that fails on every correct job in a phase gets ignored within a week, which
+is this repository's own standing warning turned on itself. It reports the overrun as a
+warning while the spec carries no edit decisions at all, and as a failure once something
+has proposed one.
+
+**What could not be run here.** ASR against real speech. The stage runs end to end — audio
+extraction, the phase 0 invocation, the parse, the artifact — and the parser is written
+against `output_json` in whisper.cpp's own `examples/cli/cli.cpp` rather than against a
+JSON shape somebody imagined. But no machine available for this work could reach the
+weights, so what has been transcribed is a test tone, correctly, to no words. The
+end-to-end ASR test is written against whatever `constraints.yaml` names and skips when
+those weights are absent, so it runs on the target machine at `large-v3` rather than
+quietly testing something smaller.
+
+**What phase 5 inherits.** A real take, still. Both remaining exit criteria — "zoom
+behaviour on real cursor data is sane" and "the output is something you would actually
+post" — are judgements about footage, and the phase-2 tunables have not met reality yet.
+Expect to retune them, and expect the first real recording to be where `plan_captions`'s
+`PAUSE_S` and the focus weights get their first honest number.
 
 ---
 

@@ -31,8 +31,9 @@ put it in the design first.
 | Path | What lives there |
 |---|---|
 | `spec/` | The Pydantic models, field-origin metadata, migrations, JSON Schema + TypeScript emit |
-| `ingest/` | Recorder-event adapter, synthetic fixture generator |
-| `plan/` | Deterministic planners (`plan_focus`) |
+| `ingest/` | Recorder adapters (Cap), synthetic fixture generators |
+| `plan/` | Deterministic planners (`plan_focus`, `plan_captions`) |
+| `synth/` | ASR and TTS stages. `asr.py` is open transcription; `align` is phase 8 (§5.3) |
 | `compile/` | Time projection, ASS captions, SVG overlays, the FFmpeg graph |
 | `verify/` | §9.1's deterministic checks and the report |
 | `runner/` | Stage contract, `LocalRunner`, cache keys, SQLite, the pipeline |
@@ -49,6 +50,7 @@ Top-level package names follow §12's tree literally rather than nesting under a
 ```sh
 make install     # package + dev dependencies
 make run         # generate the fixture and run the whole pipeline
+make take        # a Cap-format take: bundle -> job -> both renders (needs ASR)
 make broken      # the deliberately bad fixture, so §9.1's checks are seen firing
 make check       # tests + generated-artifact drift + TypeScript typecheck
 ```
@@ -57,8 +59,15 @@ make check       # tests + generated-artifact drift + TypeScript typecheck
 is the target machine's hardware path and **does not exist off macOS** — the
 render stage says so clearly rather than letting FFmpeg fail obscurely.
 
-Needs `ffmpeg` with libass and at least one installed font. Node is only for
-`make typecheck`.
+Needs `ffmpeg` with libass and at least one installed font. On macOS that means
+`ffmpeg-full`; Homebrew's `ffmpeg` no longer depends on libass and cannot burn a
+caption (environment findings §8). Which option reads the filter graph from a file
+differs by version and is probed rather than assumed (`compile/ffmpeg.py`), so any
+FFmpeg from 6 to 9 works. Node is only for `make typecheck`.
+
+`transcribe` additionally needs `whisper-cli` on `PATH` and `ggml-<model>.bin` under
+`prefs/constraints.yaml`'s `asr.models_dir`. Without them an ingested job fails with a
+message saying exactly that; every other target runs without it.
 
 ## The target machine
 
@@ -66,7 +75,8 @@ A base-model **M1 MacBook Air: 8GB unified memory, fanless, 256GB** (§16). This
 is not trivia; it decides things:
 
 - **One model resident at a time.** `LocalRunner` refuses to start a second stage
-  holding weights. Nothing sets that flag yet — `transcribe` will be the first.
+  holding weights. `transcribe` is the first stage to set that flag, and it alone is
+  3 984 MB against a ~5 500 MB working ceiling (environment findings §5).
 - Agent-CLI stages hold no local weights, so they are the ones that parallelize.
 - Burst speed and sustained speed are different numbers on a fanless machine. Say
   which one a measurement is.
@@ -86,6 +96,8 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | `EditDecisions` is projected at compile, never baked into the spec | `compile/timeline.py` |
 | No model emits an FFmpeg argument or a pixel | principle 2; `compile/` is model-free |
 | A model stage's cache key includes model id + prompt version | `runner/cache.py` — refuses to key without them |
+| One caption list serves every profile, sized to the tightest | `plan/captions.py`; wrapping stays in `compile/captions.py` |
+| Job-level stages run before the per-profile ones, never interleaved | `runner/pipeline.py` — they rewrite the spec the others fingerprint |
 | Generated files match the models | `make check-generated`, `tests/test_generated.py` |
 
 ## Conventions
@@ -138,18 +150,45 @@ is an expression and the crop path is `sendcmd`. `sendcmd` must sit *upstream* o
 the filters it targets. Verify a mechanism with a five-second render before
 building on it — `git log` has the session where that saved a day.
 
+**A `sendcmd` with nothing to send.** FFmpeg does not ignore it; it refuses the whole
+graph with "No commands were specified" and exits. Zoom mode with no overlays emits no
+commands at all, which is exactly what an ingested take looks like before `plan_overlays`
+exists — and the synthetic fixture, which always has overlays and music, never went near
+it. Both `sendcmd` and `asendcmd` are omitted when their script would be empty.
+
+**A check that fires on every correct job in a phase.** §9.1's budget check failed every
+phase-4 render, correctly: a raw take overruns a 15s budget, and before `plan_edit` exists
+there is nothing to have cut with. Same rule as the fixture that is not actually good —
+the check has to know what phase it is in, so it warns while the spec carries no edit
+decisions and fails once something has proposed one.
+
+**An FFmpeg option baked into a cached artifact.** `compile` writes the whole command into
+its manifest and `render` replays it, so a cached compile plus a toolchain upgrade replays
+an option the new binary does not have. Anything that belongs to the *binary* rather than
+to the graph is `render`'s to decide and `render`'s to carry in its cache key.
+
 ## What is built, and what is blocked
 
-Phases 1–3 are built, plus §9.1's deterministic checks pulled forward from phase 6.
-Phase 0 — the environment spike — **has not been run**, and phase 4 is blocked on
-it:
+Phases 1–4 are built, plus §9.1's deterministic checks pulled forward from phase 6.
+Phase 0 has been run: `docs/environment-findings.md` holds the measured numbers, and
+everything phase 4 was waiting on is settled — Cap's cursor format, `whisper.cpp` as
+the ASR backend, and the memory budget per stage.
 
-- No recorder output, so the adapter has nothing real to be written against
-  (risk R1 is still open).
-- No ASR backend chosen or benchmarked.
-- `hoocode` not installed, so no model stage can run (phase 5 onward).
+**What is still missing is a real recording.** Phase 4 built the whole path and ran it
+against `ingest/cap_fixture.py`, a bundle in Cap's own on-disk format carrying every trap
+phase 0 measured. That is not the same thing as a take:
 
-**Do not write ASR output parsers you cannot run.** Three parsers against JSON
-shapes nobody has seen is precisely the failure phase 0 exists to prevent. The
-same goes for the agent-CLI invocation: §7.3's contract is specified, and phase 0
-is where it gets confirmed.
+- The phase-2 focus tunables have never met real cursor data. Expect to retune them, and
+  expect that to be the first honest number `plan_captions`'s `PAUSE_S` gets too.
+- Nothing is in `golden/` but the broken fixture. Promoting a real take is phase 4's one
+  unfinished build item.
+- ASR has run against a test tone, not speech. The invocation, the parse and the stage are
+  exercised end to end; recognition accuracy is not.
+- `hoocode` not installed here, so no model stage can run (phase 5 onward).
+
+**Do not write parsers for output you cannot run.** Three ASR parsers against JSON shapes
+nobody has seen is precisely the failure phase 0 exists to prevent. There is one ASR
+backend for that reason, and its parser is written against `output_json` in whisper.cpp's
+own `examples/cli/cli.cpp`. The same goes for the agent-CLI invocation: §7.3's contract is
+specified and phase 0 confirmed it, including that 11 of 12 replies arrive inside a code
+fence that has to be stripped.
