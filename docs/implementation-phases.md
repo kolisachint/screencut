@@ -3,9 +3,10 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phase 0 has been run and phases 1 to 4 are built, with phase 6's deterministic layer among
-them — phase 4 less the real take it cannot record here, which is written up in its own
-section. Its measured results are in [`environment-findings.md`](environment-findings.md), and
+Phase 0 has been run and phases 1 to 5 are built, with phase 6's deterministic layer among
+them. Two phases carry an asterisk: phase 4 has no real take and phase 5 has never called
+a model, both because of what is not installed on the machine this was built on. Each
+section says so and marks which of its exit criteria that leaves open. Its measured results are in [`environment-findings.md`](environment-findings.md), and
 phases 4, 5 and 8 should be read alongside it. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
@@ -377,7 +378,7 @@ Expect to retune them, and expect the first real recording to be where `plan_cap
 
 ---
 
-## Phase 5 — Editorial pass ★
+## Phase 5 — Editorial pass ★ — **built, less the judgement**
 
 **★ The product claim.** Phase 4 produces a captioned, auto-zoomed version of everything
 you recorded. This is the phase where it becomes *edited* — where the dead air, the
@@ -407,15 +408,23 @@ fumbled restart and the "um" come out.
 
 - `trim` alone produces a watchable video from a real take: no dead air, no fillers, no
   clipped words at the boundaries. This is the §7.4 floor, and it has to be genuinely
-  acceptable on its own.
+  acceptable on its own. — **met on the fixture, not on a real take.** `silencedetect`
+  finds all four of the synthetic fixture's dead-air gaps and the closed list finds its
+  one "um"; 24 s becomes 17.7 s and §9.1's `cut_mid_word` reports nothing. Whether it is
+  *watchable* is a judgement about footage, and there is still no footage.
 - `plan_edit` on top of it produces cuts you would have made, and its overrides of `trim`
-  are defensible — check the override rate on the report (§9.1).
+  are defensible — check the override rate on the report (§9.1). — **open.** The stage,
+  the adapter and the override rate are built and exercised against a scripted agent;
+  `hoocode` is not installed on the machine this was built on, so no model has run.
 - One `EditSpec` renders at two different lengths under two `duration_budget` values, and
-  both are coherent — the short is not just the demo with its ending missing.
+  both are coherent — the short is not just the demo with its ending missing. — **met**,
+  and with no second model call, which is the §4.4.1 half of the claim.
 - Killing the network mid-job still produces a render: the `trim`-only one, all segments
-  `essential`.
+  `essential`. — **met.**
 - Re-running with an unchanged transcript hits the cache and calls no model. If it does not,
-  phase 3's key is wrong (§5.2), and everything after this gets slow and expensive.
+  phase 3's key is wrong (§5.2), and everything after this gets slow and expensive. —
+  **met**, and a *degraded* run deliberately does not cache, so one lost network does not
+  become permanent.
 
 **This is a stop-and-reassess gate,** and decision #19 gives it a much better shape than a
 single pass/fail: `trim` and `plan_edit` can be judged separately. If `trim` is good and
@@ -426,6 +435,72 @@ assumption that later phases improve it. They do not; they decorate it.
 
 **Not in this phase:** emphasis, overlays, metadata — those are phase 9, and they are
 decoration on top of this.
+
+**How it came out.** The stop-and-reassess gate cannot be walked through here, and that is
+the honest headline: `hoocode` is not installed on the machine this was built on, so
+`plan_edit` has never called a model. Everything around it is built and exercised — the
+adapter, the reconciliation, the cache key, the override rate, and §7.4's degradation —
+against a script on `PATH` that emits the event stream hoocode emits, fence and all. That
+tests our code end to end and tests nothing about editorial taste, which is the half the
+gate is actually for.
+
+**`trim` is better than the plan gave it credit for, and the reason is `silencedetect`.**
+Measuring the audio rather than inferring silence from gaps in the transcript is the
+difference between a mechanism and a heuristic: a gap in the words is not a gap in the
+sound, and a long "uhhhh" is one and not the other. On the synthetic fixture it finds all
+four dead-air gaps to within 20 ms of where the generator put them.
+
+**Three rules in `trim`, each written after it cut something it should not have.** A range
+with words in it is not dead air whatever the meter says — someone speaking quietly reads
+as silence at any threshold loose enough to catch real dead air, so ASR wins and the
+silence is clipped around the words. `keep_pad_ms` *shrinks* a removal rather than growing
+it, because a cut at the level threshold clips the breath before the next word. And
+removals merge, because a filler landing against a silence would otherwise leave a 40 ms
+segment that §4.4's totality makes real, selectable and reviewable.
+
+**The filler list is deliberately short.** "so", "like", "right" and "actually" are fillers
+about half the time and ordinary words the other half. A list cannot tell which, and
+stripping every one of them mangles speech — judging that is exactly what §7.1 pays
+`plan_edit` for, so the list stays unambiguous and the model gets the ambiguous half.
+
+**The model returns intent; the partition is derived.** This is the decision the plan did
+not contain. `EditDecisions` demands a gapless, non-overlapping cover of exactly
+`[0, duration]`, and asking a language model to land that in float arithmetic buys a retry
+on nearly every call for no editorial gain. So the fragment carries removals and tiered
+segments as ranges the model cares about, and `reconcile` derives the total partition:
+removals win, segments are clipped to what is left, and anything nobody tiered stays
+`essential`. §4.4's totality still holds by construction — it is arithmetic that holds it,
+which is §4.5's discipline applied one level up.
+
+**`proposed_by` is derived rather than reported,** for the same reason. A removal
+overlapping one of `trim`'s proposals came from `trim` whatever the model says, and the
+§9.1 override rate is a number about the model that the model therefore cannot write about
+itself.
+
+**No `duration_budget` reaches the prompt, and that is §4.4.1 doing real work.** Putting
+budgets in front of the model would make the ranking depend on the profile — and then one
+`EditSpec` could not render at two lengths, a shorter short would cost a model call, and
+the cache key of the most expensive stage in the pipeline would move whenever somebody
+adjusted a number the compiler owns.
+
+**A degraded artifact is not cached.** §7.4 says a failed LLM stage degrades and the job
+records it; it does not say what the cache should do, and the obvious answer is wrong.
+Caching the fallback makes one lost network permanent — the next run, with the network
+back, serves the degraded artifact forever. The file is still written so the job finishes;
+the missing cache row is what makes the next run try the model again.
+
+**What `trim` alone gets wrong, and why it is left wrong.** Cutting "um" out of the middle
+of "so um clicking through…" leaves "so" as a 0.54 s caption block of its own, which §9.1
+duly warns about. The deterministic fix — extend a removal to swallow a fragment too short
+to display — depends on `min_display_s`, which is per profile, and tiering is supposed to
+be aspect-independent. So it is left for `plan_edit`, which under §7.1 is allowed to widen
+a proposed removal and is the stage that should be making that call.
+
+**What phase 6 and 7 inherit.** The judgement half of this gate, still: a real take, a
+model that has actually run on it, and someone deciding whether the cuts are ones they
+would have made. Until that happens, `trim` is the product and `plan_edit` is untested
+polish on top of it — which, per decision #19, is a real shipping position rather than a
+failure.
 
 ---
 

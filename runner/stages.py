@@ -26,14 +26,18 @@ from typing import Any, Callable
 
 from compile.render import prepare
 from plan.captions import PAUSE_S, plan_captions, tightest
+from plan.edit import EditPlan, INSTRUCTION, build_content, reconcile
 from plan.focus import plan_focus
+from plan.trim import TrimTunables, detect_silence, trim
 from prefs import Constraints, load_constraints
 from spec.captions import Word
+from spec.edit import EditDecisions, Removal, decisions_from_removals
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
 from spec.profiles import Encoder, RenderProfile
 from synth.asr import Transcript, transcribe
 
+from runner import agent
 from runner.cache import file_digest
 from runner.contract import StageRequest, StageResult
 
@@ -97,6 +101,15 @@ class StageContext:
     profile: RenderProfile
     job_dir: Path
     encoder: Encoder
+    job_keys: dict[str, str] = field(default_factory=dict)
+    """Cache keys of the job-level stages this run produced.
+
+    A per-profile stage that reads a job-level artifact has to be invalidated when
+    that artifact changes, and most of them do not read one — `verify` reads
+    `trim`'s proposal for the override rate (§9.1) and is currently the only one.
+    Keys rather than contents, for the same reason a stage's upstream keys are
+    what appear in its own: the key already stands for everything the artifact
+    depends on."""
 
 
 # --- fingerprints ------------------------------------------------------------
@@ -150,6 +163,31 @@ def _plan_captions_fingerprint(ctx: JobContext) -> dict[str, Any]:
         "capacity": tightest(list(ctx.profiles)),
         "pause_s": PAUSE_S,
     }
+
+
+def _trim_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """The media it measures and the §4.6 scalars it measures with.
+
+    The transcript arrives through the upstream key rather than being hashed
+    again here, which is the difference between a fingerprint and a copy of the
+    inputs."""
+    return {
+        "source_digest": file_digest(ctx.job_dir / ctx.spec.source.path),
+        "has_audio": ctx.spec.source.has_audio,
+        "trim": ctx.constraints.trim.model_dump(mode="json"),
+    }
+
+
+def _plan_edit_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """The focus track, and nothing else of its own.
+
+    Not the profiles, and specifically not `duration_budget`: §4.4.1 makes tiering
+    aspect-independent, so a shorter short must not cost a model call. Not the
+    transcript or the trim proposal either — both reach the key through the
+    upstream stages they came from. The model id and prompt version go in through
+    `params`, where §5.2 requires them.
+    """
+    return {"focus": ctx.spec.focus.model_dump(mode="json"), "duration": ctx.spec.source.duration}
 
 
 def _compile_fingerprint(ctx: StageContext) -> dict[str, Any]:
@@ -258,6 +296,90 @@ def _apply_captions(spec: EditSpec, artifact: Path) -> EditSpec:
     )
 
 
+def _run_trim(request: StageRequest) -> StageResult:
+    """Proposed removals, by arithmetic (§4.6). No model, and §7.1 says so."""
+    spec, job_dir = _job_context(request)
+    transcript = Transcript.model_validate_json(
+        (job_dir / request.inputs["transcript"]).read_text()
+    )
+    words = [Word(t_in=w.t_in, t_out=w.t_out, text=w.text) for w in transcript.words]
+    tunables = TrimTunables(**request.params["trim"])
+
+    silences = (
+        detect_silence(
+            job_dir / spec.source.path,
+            silence_db=tunables.silence_db,
+            min_silence_ms=tunables.min_silence_ms,
+        )
+        if spec.source.has_audio
+        else []
+    )
+    removals = trim(words, silences, spec.source.duration, tunables)
+
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps([r.model_dump(mode="json") for r in removals], indent=2)
+    )
+    cut = sum(r.duration for r in removals)
+    return StageResult(
+        stage=request.stage,
+        output=request.output,
+        note=f"{len(removals)} removals, {cut:.2f}s of {spec.source.duration:.2f}s",
+    )
+
+
+def _run_plan_edit(request: StageRequest) -> StageResult:
+    """The first model stage (§7.1), and the first that is allowed to fail (§7.4).
+
+    A failure here degrades to `trim`'s removals with every segment `essential` —
+    a silence-trimmed, filler-stripped video rather than the unedited take. That
+    row of §7.4's table is why the `trim` split earns its place, and it is the one
+    path in this pipeline that has to work when nothing else does.
+    """
+    spec, job_dir = _job_context(request)
+    transcript = Transcript.model_validate_json(
+        (job_dir / request.inputs["transcript"]).read_text()
+    )
+    proposals = [
+        Removal.model_validate(entry)
+        for entry in json.loads((job_dir / request.inputs["trim"]).read_text())
+    ]
+    words = [Word(t_in=w.t_in, t_out=w.t_out, text=w.text) for w in transcript.words]
+
+    outcome = agent.run_stage(
+        agent.build_prompt(
+            INSTRUCTION,
+            EditPlan,
+            build_content(words, proposals, spec.focus, spec.source.duration),
+        ),
+        EditPlan,
+        job_dir=job_dir,
+        model=request.params["model"],
+    )
+    if outcome.fragment is not None:
+        decisions = reconcile(outcome.fragment, proposals, spec.source.duration)
+    else:
+        decisions = decisions_from_removals(proposals, spec.source.duration)
+
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(decisions.model_dump_json(indent=2))
+    return StageResult(
+        stage=request.stage,
+        output=request.output,
+        degraded=outcome.degraded,
+        note=outcome.note,
+    )
+
+
+def _apply_edit(spec: EditSpec, artifact: Path) -> EditSpec:
+    decisions = EditDecisions.model_validate_json(artifact.read_text())
+    return EditSpec.model_validate(
+        {**spec.model_dump(mode="json"), "edit": decisions.model_dump(mode="json")}
+    )
+
+
 def _run_plan_focus(request: StageRequest) -> StageResult:
     spec, profile, job_dir = _context(request)
     plan = plan_focus(spec, profile)
@@ -332,10 +454,15 @@ def _run_render(request: StageRequest) -> StageResult:
 def _verify_fingerprint(ctx: StageContext) -> dict[str, Any]:
     """Verification reads the whole spec and the whole profile, so it re-runs
     whenever either moves. It is seconds of work over a render that already
-    exists; being precise here would buy nothing."""
+    exists; being precise here would buy nothing.
+
+    `trim`'s key is here because the override rate compares the surviving removals
+    against what `trim` proposed, and a changed proposal changes that number
+    without changing the spec at all."""
     return {
         "spec": ctx.spec.model_dump(mode="json", exclude={"created_at"}),
         "profile": ctx.profile.model_dump(mode="json"),
+        "trim": ctx.job_keys.get("trim"),
     }
 
 
@@ -361,8 +488,15 @@ def _run_verify(request: StageRequest) -> StageResult:
         )
         for entry in manifest.get("assets", [])
     ]
+    proposal_path = request.inputs.get("trim")
+    proposals = (
+        [Removal.model_validate(entry) for entry in json.loads((job_dir / proposal_path).read_text())]
+        if proposal_path and (job_dir / proposal_path).is_file()
+        else None
+    )
     report = verify_render(
-        spec, profile, project(spec, profile), focus, job_dir / request.inputs["render"], assets
+        spec, profile, project(spec, profile), focus, job_dir / request.inputs["render"], assets,
+        trim_proposals=proposals,
     )
     out = job_dir / request.output
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -395,6 +529,22 @@ JOB_STAGES: dict[str, StageSpec] = {
             run=_run_plan_captions,
             apply=_apply_captions,
         ),
+        StageSpec(
+            name="trim",
+            version=1,
+            depends_on=("transcribe",),
+            fingerprint=_trim_fingerprint,
+            run=_run_trim,
+        ),
+        StageSpec(
+            name="plan_edit",
+            version=1,
+            depends_on=("transcribe", "trim"),
+            fingerprint=_plan_edit_fingerprint,
+            run=_run_plan_edit,
+            apply=_apply_edit,
+            model_backed=True,
+        ),
     )
 }
 """Stages that run **once per job**, ahead of the per-profile ones.
@@ -410,12 +560,18 @@ Ordering matters for a duller reason too: they rewrite `spec.json`, and the
 per-profile fingerprints are taken from the spec. Interleaving the two groups
 would have `compile` hash a spec that changed after it looked."""
 
-JOB_ORDER: tuple[str, ...] = ("transcribe", "plan_captions")
+JOB_ORDER: tuple[str, ...] = ("transcribe", "plan_captions", "trim", "plan_edit")
+"""`plan_captions` sits ahead of `trim` because §4.5 lets it: captions are planned
+against the full source timeline and `compile` applies the edit, so the two do not
+depend on each other in either direction. The order here is the order they run in,
+and only `plan_edit`'s dependence on `trim` is load-bearing."""
 
 #: What each job-level stage calls its upstream artifacts.
 JOB_INPUT_NAMES: dict[str, str] = {
     "transcribe": "transcript",
     "plan_captions": "captions",
+    "trim": "trim",
+    "plan_edit": "edit",
 }
 
 

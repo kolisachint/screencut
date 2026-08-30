@@ -17,7 +17,7 @@ from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
 from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
 
-from runner import db
+from runner import agent, db
 from runner.cache import cache_key
 from runner.contract import StageRequest
 from runner.job import JobConfig
@@ -54,6 +54,10 @@ class JobRun:
     outcomes: list[StageOutcome] = field(default_factory=list)
     renders: dict[str, Path] = field(default_factory=dict)
     reports: dict[str, VerificationReport] = field(default_factory=dict)
+    degradations: list[str] = field(default_factory=list)
+    """Stages that produced their deterministic fallback rather than their real
+    answer (§7.4). Carried to the job record because under decision #12 the review
+    page is the only place a degraded job announces itself."""
 
     @property
     def verified(self) -> bool:
@@ -97,19 +101,24 @@ def run_job(
         resolved = tuple(
             name if isinstance(name, RenderProfile) else resolve_profile(name) for name in names
         )
-        spec = _run_job_stages(run, connection, spec, resolved, job_dir, runner, force)
+        spec, job_paths, job_keys = _run_job_stages(
+            run, connection, spec, resolved, job_dir, runner, force
+        )
         for name in names:
             # A name goes through `constraints.yaml`; a profile object arrives already
             # resolved. The review UI will pass the second kind, since "make the short
             # shorter" is one edited field on a profile rather than a new named one.
             profile = name if isinstance(name, RenderProfile) else resolve_profile(name)
-            _run_profile(run, connection, spec, profile, job_dir, runner, encoder, force)
+            _run_profile(
+                run, connection, spec, profile, job_dir, runner, encoder, force, job_paths, job_keys
+            )
         db.upsert_job(
             connection,
             job_id=spec.job_id,
             job_dir=str(job_dir),
             spec_version=spec.spec_version,
             status="rendered" if run.verified else "failed_verification",
+            degradations=run.degradations,
         )
     return run
 
@@ -122,16 +131,17 @@ def _run_job_stages(
     job_dir: Path,
     runner: LocalRunner,
     force: bool,
-) -> EditSpec:
+) -> tuple[EditSpec, dict[str, str], dict[str, str]]:
     """Run what `job.json` asks for, once, and fold the results into the spec.
 
-    Returns the spec the per-profile stages will render. A job directory with no
-    `job.json` — every fixture in this repository — asks for nothing and gets its
-    spec back untouched, which is why adding this group broke no existing job.
+    Returns the spec the per-profile stages will render, plus their artifact paths
+    and cache keys, which `verify` needs. A job directory with no `job.json` —
+    every fixture in this repository — asks for nothing and gets its spec back
+    untouched, which is why adding this group broke no existing job.
     """
     wanted = set(JobConfig.load(job_dir).stages)
     if not wanted:
-        return spec
+        return spec, {}, {}
 
     context = JobContext(
         spec=spec, profiles=profiles, job_dir=job_dir, constraints=load_constraints()
@@ -144,6 +154,11 @@ def _run_job_stages(
         if name not in wanted:
             continue
         stage = JOB_STAGES[name]
+        # §5.2's one subtlety that will not announce itself: a model stage's key
+        # must carry the model id and prompt version, or the cache serves the old
+        # answer after exactly the change you were evaluating. `cache_key` refuses
+        # to compute one without them; this is where they come from.
+        params = agent.cache_params(context.constraints.agent.model) if stage.model_backed else {}
         key = cache_key(
             stage=stage.name,
             stage_version=stage.version,
@@ -151,7 +166,7 @@ def _run_job_stages(
                 "self": stage.fingerprint(context),
                 "upstream": {dependency: keys[dependency] for dependency in stage.depends_on},
             },
-            params={},
+            params=params,
             model_backed=stage.model_backed,
         )
         keys[name] = key
@@ -172,20 +187,30 @@ def _run_job_stages(
                 },
                 params={
                     "asr": context.constraints.asr.model_dump(mode="json"),
+                    "trim": context.constraints.trim.model_dump(mode="json"),
+                    "model": context.constraints.agent.model,
                     "profiles": [p.model_dump(mode="json") for p in profiles],
                 },
                 output=str(artifact),
             )
-            runner.run(request, holds_local_weights=stage.holds_local_weights)
-            db.record_artifact(
-                connection,
-                cache_key=key,
-                job_id=spec.job_id,
-                stage=name,
-                stage_version=stage.version,
-                profile="-",
-                path=str(artifact),
-            )
+            result = runner.run(request, holds_local_weights=stage.holds_local_weights)
+            if result.degraded:
+                # Deliberately not cached. A degraded artifact is what the stage
+                # produced *because it could not run* — no network, no agent, a
+                # fragment rejected twice (§7.4) — and caching it would make one
+                # transient failure permanent. The file stays so the job finishes;
+                # the missing row is what makes the next run try the model again.
+                run.degradations.append(f"{name}: {result.note or 'degraded'}")
+            else:
+                db.record_artifact(
+                    connection,
+                    cache_key=key,
+                    job_id=spec.job_id,
+                    stage=name,
+                    stage_version=stage.version,
+                    profile="-",
+                    path=str(artifact),
+                )
         run.outcomes.append(
             StageOutcome(stage=name, profile="job", cache_key=key, path=str(artifact), cached=cached)
         )
@@ -198,7 +223,7 @@ def _run_job_stages(
         # verification and golden replay all read `spec.json`, and a caption list
         # that lived only in `stages/` would be invisible to every one of them.
         (job_dir / "spec.json").write_text(spec.model_dump_json(indent=2) + "\n")
-    return spec
+    return spec, paths, keys
 
 
 def _run_profile(
@@ -210,9 +235,16 @@ def _run_profile(
     runner: LocalRunner,
     encoder: Encoder | None,
     force: bool,
+    job_paths: dict[str, str] | None = None,
+    job_keys: dict[str, str] | None = None,
 ) -> None:
+    job_paths = job_paths or {}
     context = StageContext(
-        spec=spec, profile=profile, job_dir=job_dir, encoder=encoder or profile.encode.encoder
+        spec=spec,
+        profile=profile,
+        job_dir=job_dir,
+        encoder=encoder or profile.encode.encoder,
+        job_keys=job_keys or {},
     )
     keys: dict[str, str] = {}
     paths: dict[str, str] = {}
@@ -247,6 +279,9 @@ def _run_profile(
                         INPUT_NAMES[dependency]: paths[dependency]
                         for dependency in stage.depends_on
                     },
+                    # `verify` reads `trim`'s proposal for the override rate. Its
+                    # key is in the fingerprint, so a changed proposal re-verifies.
+                    **({"trim": job_paths["trim"]} if name == "verify" and "trim" in job_paths else {}),
                 },
                 params={"profile": profile.model_dump(mode="json"), "encoder": context.encoder.value},
                 output=str(artifact),

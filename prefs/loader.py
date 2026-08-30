@@ -39,6 +39,23 @@ class AsrConstraints(BaseModel):
     language: str = "en"
 
 
+class TrimConstraints(BaseModel):
+    """§4.6's tunables. Every one is learnable by median under §10."""
+
+    model_config = ConfigDict(extra="forbid")
+    silence_db: float = -35.0
+    min_silence_ms: int = Field(default=600, ge=0)
+    keep_pad_ms: int = Field(default=120, ge=0)
+    filler_words: list[str] = Field(default_factory=lambda: ["um", "uh", "erm", "uhm", "mmm", "hmm"])
+
+
+class AgentConstraints(BaseModel):
+    """Which model the LLM stages run on (decision #13)."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str = "anthropic/claude-sonnet-5"
+
+
 class VoiceConstraints(BaseModel):
     model_config = ConfigDict(extra="forbid")
     allow_synthesis: bool = True
@@ -56,6 +73,8 @@ class Constraints(BaseModel):
 
     captions: CaptionConstraints = Field(default_factory=CaptionConstraints)
     asr: AsrConstraints = Field(default_factory=AsrConstraints)
+    trim: TrimConstraints = Field(default_factory=TrimConstraints)
+    agent: AgentConstraints = Field(default_factory=AgentConstraints)
     voice: VoiceConstraints = Field(default_factory=VoiceConstraints)
     encode: EncodeConstraints = Field(default_factory=EncodeConstraints)
     profiles: dict[str, dict[str, Any]] = Field(

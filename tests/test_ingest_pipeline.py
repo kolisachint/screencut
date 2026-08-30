@@ -21,6 +21,7 @@ from prefs import load_constraints
 from runner.cli import main as cli_main
 from runner.job import JobConfig
 from runner.pipeline import run_job
+from runner.stages import JOB_ORDER
 from spec import Encoder
 from spec.focus import FocusKind
 from spec.migrations import load_spec_file
@@ -56,7 +57,7 @@ def test_ingest_writes_a_job_the_pipeline_can_run(bundle, tmp_path):
     assert spec.job_id == "job01"
     assert spec.focus.points, "the whole point of ingest is the focus track"
     assert (job / spec.source.path).is_file(), "the take is copied in; a job must survive being moved"
-    assert JobConfig.load(job).stages == ["transcribe", "plan_captions"]
+    assert JobConfig.load(job).stages == ["transcribe", "plan_captions", "trim", "plan_edit"]
 
 
 @needs_ffmpeg
@@ -108,7 +109,7 @@ def test_a_silent_recording_renders_both_profiles_and_says_it_found_no_words(bun
     assert result.verified, [f for r in result.reports.values() for f in r.failures]
 
     assert load_spec_file(job / "spec.json").captions == []
-    assert [o.stage for o in result.outcomes if o.profile == "job"] == ["transcribe", "plan_captions"]
+    assert [o.stage for o in result.outcomes if o.profile == "job"] == list(JOB_ORDER)
 
 
 @needs_ffmpeg
@@ -126,9 +127,15 @@ def test_the_job_stages_run_once_for_the_whole_job_not_once_per_profile(bundle, 
 
 
 @needs_ffmpeg
-def test_re_running_an_ingested_job_does_no_work(bundle, tmp_path):
-    """Including the job-level stages: they rewrite `spec.json`, and a rewrite that
-    was not byte-stable would invalidate every per-profile stage on every run."""
+def test_re_running_an_ingested_job_repeats_only_what_degraded(bundle, tmp_path):
+    """Every stage that produced a real answer is cached — including the job-level
+    ones, which rewrite `spec.json`, so a rewrite that was not byte-stable would
+    invalidate every per-profile stage on every run.
+
+    `plan_edit` is the exception here because the agent is not installed, so it
+    degraded, and a degraded artifact is deliberately not cached (§7.4): caching
+    it would make one lost network permanent. `tests/test_plan_edit.py` runs the
+    same job with an agent on PATH and gets a clean cache hit."""
     job = tmp_path / "job07"
     cli_main(["ingest", str(bundle), "--out", str(job)])
     _silence(job)
@@ -136,7 +143,7 @@ def test_re_running_an_ingested_job_does_no_work(bundle, tmp_path):
 
     run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
     again = run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
-    assert again.did_no_work, again.ran()
+    assert again.ran() == ["job/plan_edit"], again.ran()
 
 
 @needs_ffmpeg

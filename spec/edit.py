@@ -158,6 +158,45 @@ class EditDecisions(SpecModel):
         return any(r.contains(t) for r in self.removals)
 
 
+DEGRADED_REASON = "trim only; no editorial pass tiered this"
+"""The `reason` on a segment nobody ranked.
+
+§7.4's degradation writes real segments, so they need real reasons — a tier with
+no reason cannot be argued with in review (§8), and "the model never ran" is
+exactly what a reviewer needs to know about a wall of `essential`."""
+
+
+def decisions_from_removals(
+    removals: list[Removal],
+    duration: PositiveSeconds,
+    *,
+    tier: Tier = Tier.ESSENTIAL,
+    reason: str = DEGRADED_REASON,
+) -> EditDecisions:
+    """Fill the gaps between removals with segments, so the pair is total (§4.4).
+
+    `trim` proposes removals and nothing else — what survives is not its decision
+    to make. This is the arithmetic that turns a removal list into a renderable
+    edit, and it has two callers that both matter: §7.4's degradation, where the
+    tier is `essential` because nothing ranked it, and any future stage that needs
+    the complement of a cut list.
+
+    Everything the removals do not cover becomes one segment. Adjacent removals
+    leave no segment between them rather than a zero-length one, which
+    `EditDecisions` would reject and a reviewer would have to squint at.
+    """
+    ordered = sorted(removals, key=lambda r: r.t_in)
+    segments: list[Segment] = []
+    cursor = 0.0
+    for removal in [*ordered, None]:
+        end = removal.t_in if removal is not None else duration
+        if end - cursor > TIME_EPS:
+            segments.append(Segment(t_in=cursor, t_out=end, tier=tier, reason=reason))
+        if removal is not None:
+            cursor = max(cursor, removal.t_out)
+    return EditDecisions(removals=ordered, segments=segments)
+
+
 def choose_threshold(decisions: EditDecisions, budget: PositiveSeconds) -> tuple[Tier, float]:
     """The §4.4.1 projection rule: the loosest tier threshold that fits `budget`.
 

@@ -32,11 +32,11 @@ put it in the design first.
 |---|---|
 | `spec/` | The Pydantic models, field-origin metadata, migrations, JSON Schema + TypeScript emit |
 | `ingest/` | Recorder adapters (Cap), synthetic fixture generators |
-| `plan/` | Deterministic planners (`plan_focus`, `plan_captions`) |
+| `plan/` | Planners: `plan_focus`, `plan_captions`, `trim` deterministic; `plan_edit` the one model stage |
 | `synth/` | ASR and TTS stages. `asr.py` is open transcription; `align` is phase 8 (§5.3) |
 | `compile/` | Time projection, ASS captions, SVG overlays, the FFmpeg graph |
 | `verify/` | §9.1's deterministic checks and the report |
-| `runner/` | Stage contract, `LocalRunner`, cache keys, SQLite, the pipeline |
+| `runner/` | Stage contract, `LocalRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
 | `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles |
 | `golden/` | The deliberately bad fixture and the findings it must produce |
 | `schemas/` | **Generated.** `make generated` rewrites them; `make check-generated` fails if they drift |
@@ -65,9 +65,12 @@ caption (environment findings §8). Which option reads the filter graph from a f
 differs by version and is probed rather than assumed (`compile/ffmpeg.py`), so any
 FFmpeg from 6 to 9 works. Node is only for `make typecheck`.
 
-`transcribe` additionally needs `whisper-cli` on `PATH` and `ggml-<model>.bin` under
-`prefs/constraints.yaml`'s `asr.models_dir`. Without them an ingested job fails with a
-message saying exactly that; every other target runs without it.
+An ingested job additionally wants two things `make run` and `make broken` do not.
+`transcribe` needs `whisper-cli` on `PATH` and `ggml-<model>.bin` under
+`prefs/constraints.yaml`'s `asr.models_dir`, and without them the job fails with a message
+saying exactly that. `plan_edit` needs `hoocode` on `PATH`, and without it the job does
+*not* fail — it degrades to `trim`'s edit and says so on the job record (§7.4), which is
+the whole point of that row.
 
 ## The target machine
 
@@ -98,6 +101,8 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | A model stage's cache key includes model id + prompt version | `runner/cache.py` — refuses to key without them |
 | One caption list serves every profile, sized to the tightest | `plan/captions.py`; wrapping stays in `compile/captions.py` |
 | Job-level stages run before the per-profile ones, never interleaved | `runner/pipeline.py` — they rewrite the spec the others fingerprint |
+| No `duration_budget` reaches a model; tiering is aspect-independent | `plan/edit.py`, §4.4.1; the fingerprint omits profiles too |
+| A degraded artifact is never cached | `runner/pipeline.py` — caching it makes one lost network permanent |
 | Generated files match the models | `make check-generated`, `tests/test_generated.py` |
 
 ## Conventions
@@ -162,6 +167,20 @@ there is nothing to have cut with. Same rule as the fixture that is not actually
 the check has to know what phase it is in, so it warns while the spec carries no edit
 decisions and fails once something has proposed one.
 
+**Trusting a model to produce a valid partition.** `EditDecisions` wants a gapless cover
+of exactly `[0, duration]`, and a language model doing that in float arithmetic buys a
+retry on nearly every call. The fragment is *intent*; `plan/edit.py` derives the partition.
+Where an invariant is arithmetic, make arithmetic hold it and let the model decide only
+what arithmetic cannot.
+
+**Letting a model report a number about itself.** `Removal.proposed_by` feeds §9.1's
+override rate, which measures how much of `trim` the model rejected. It is derived from
+overlap with `trim`'s proposal, never taken from the fragment.
+
+**Caching a fallback.** §7.4's degradation is what a stage produced *because it could not
+run*. Cache it and one lost network is permanent — every later run serves the degraded
+edit with the network back up and nothing saying why.
+
 **An FFmpeg option baked into a cached artifact.** `compile` writes the whole command into
 its manifest and `render` replays it, so a cached compile plus a toolchain upgrade replays
 an option the new binary does not have. Anything that belongs to the *binary* rather than
@@ -169,14 +188,15 @@ to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
 ## What is built, and what is blocked
 
-Phases 1–4 are built, plus §9.1's deterministic checks pulled forward from phase 6.
+Phases 1–5 are built, plus §9.1's deterministic checks pulled forward from phase 6.
 Phase 0 has been run: `docs/environment-findings.md` holds the measured numbers, and
 everything phase 4 was waiting on is settled — Cap's cursor format, `whisper.cpp` as
 the ASR backend, and the memory budget per stage.
 
-**What is still missing is a real recording.** Phase 4 built the whole path and ran it
-against `ingest/cap_fixture.py`, a bundle in Cap's own on-disk format carrying every trap
-phase 0 measured. That is not the same thing as a take:
+**What is still missing is a real recording and a real model call.** Phases 4 and 5 built
+the whole path and ran it against `ingest/cap_fixture.py` — a bundle in Cap's own on-disk
+format carrying every trap phase 0 measured — and against a scripted agent. Neither is the
+same thing as the real one:
 
 - The phase-2 focus tunables have never met real cursor data. Expect to retune them, and
   expect that to be the first honest number `plan_captions`'s `PAUSE_S` gets too.
@@ -184,7 +204,10 @@ phase 0 measured. That is not the same thing as a take:
   unfinished build item.
 - ASR has run against a test tone, not speech. The invocation, the parse and the stage are
   exercised end to end; recognition accuracy is not.
-- `hoocode` not installed here, so no model stage can run (phase 5 onward).
+- **No model has run.** `hoocode` is not installed here, so `plan_edit` has only ever
+  taken §7.4's degradation path or run against the scripted stand-in in
+  `tests/test_plan_edit.py`. That stand-in tests our code end to end and tests nothing
+  about editorial taste, which is what phase 5's stop-and-reassess gate is for.
 
 **Do not write parsers for output you cannot run.** Three ASR parsers against JSON shapes
 nobody has seen is precisely the failure phase 0 exists to prevent. There is one ASR
