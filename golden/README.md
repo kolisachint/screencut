@@ -42,6 +42,19 @@ the point rather than an oversight: a 34-character word overruns a 20-character
 vertical line and fits a 42-character widescreen one. A check that gave the same
 answer for both would not be checking the profile.
 
+## §9.2 is not here either, and for a third reason
+
+The transcript round-trip cannot be exercised by any fixture in this directory.
+Both fixtures' audio is a synthesized test tone, so ASR of their renders says
+nothing whatever the edit did — a fixture cannot mispronounce a word it never
+speaks. `tests/test_verify_transcript.py` runs it against constructed transcripts
+instead, which is the same honest placement as the two breakages below, arrived at
+from the opposite direction: those are checks the pipeline cannot *break*, this is
+a check the fixture cannot *feed*.
+
+The first real take promoted here fixes all three at once, and it is what
+`SEAM_TOLERANCE_S` and `WER_CEILING` are waiting for.
+
 ## Two of §11's four breakages are missing
 
 Overlapping caption blocks and a juddering crop are **not representable**.

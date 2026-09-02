@@ -115,6 +115,13 @@ class EditSpec(SpecModel):
         Diffing rendered audio against the raw transcript would flag every
         successful edit as a failure, and a check that fires on correct behaviour
         gets ignored within a week.
+
+        **This formula exists twice.** `verify.transcript.expected_transcript`
+        computes the same selection from the ASR transcript through the projected
+        timeline, because §9.2 needs each word's *output* time to say where a
+        difference is. One formula written twice is a trap this codebase has
+        already sprung, so the two are checked against each other in
+        `tests/test_verify_transcript.py` rather than trusted to agree.
         """
         if not self.edit.segments and not self.edit.removals:
             return self.transcript  # nothing has been decided yet; the whole take survives

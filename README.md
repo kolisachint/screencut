@@ -17,12 +17,11 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 5 are built, plus §9.1's deterministic checks.** The data model
-everything else is written against; the compiler that turns it into video —
-`plan_focus`, the time projection, ASS captions, SVG overlays, an FFmpeg graph
-rendering one spec to two aspect ratios at two different lengths; the runner that
-makes re-running cheap; and verification that reads the render back and reports
-what is wrong with it.
+**Phases 1 to 6 are built.** The data model everything else is written against;
+the compiler that turns it into video — `plan_focus`, the time projection, ASS
+captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios at
+two different lengths; the runner that makes re-running cheap; and verification
+that reads the render back and reports what is wrong with it.
 
 **Phase 5 makes it an editing tool.** `trim` finds dead air by measuring the
 audio and fillers by a closed list, and `plan_edit` — the first model stage —
@@ -30,12 +29,23 @@ reviews that proposal, adds false starts of its own and ranks what survives into
 tiers. When the model cannot be reached the job still renders: `trim`'s cuts, every
 segment `essential` (§7.4), which is a real edit rather than the unedited take.
 
-**Two things have not happened yet, and both are about what is installed rather
+**Phase 6 stops garbage reaching a person.** Every render is measured rather than
+asserted — duration, loudness, true peak, caption geometry, overlay occlusion,
+crop judder, and whether the cuts add up. Then the rendered audio is transcribed
+back and diffed against what the edit says should be there: not against the raw
+transcript, which a successful edit is *supposed* to differ from, but against the
+source transcript minus the removals and minus the tiers this profile did not
+select. Differences on a cut are the edit working; differences anywhere else are
+desync, a wrong take, truncated narration, or a cut that landed inside a word.
+
+**Three things have not happened yet, and all are about what is installed rather
 than what is written.** No *real* recording has been ingested — that needs a
 screen, a microphone and Cap on the machine doing the work — so the phase-2 focus
-tunables and `trim`'s thresholds have never met real footage. And no model has
-run: `plan_edit` is exercised against a scripted stand-in, so whether its cuts are
-ones you would have made is still an open question.
+tunables and `trim`'s thresholds have never met real footage. No model has run:
+`plan_edit` is exercised against a scripted stand-in, so whether its cuts are ones
+you would have made is still an open question. And the transcript round-trip has
+never met speech: the mechanism runs end to end, but its two tolerances are
+guesses until a real recording moves them.
 
 **Phase 0 has been run** on the target machine — a base-model M1 MacBook Air,
 8GB, fanless. Its four verdicts are in
@@ -96,7 +106,7 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 | `compile/` | The time projection, ASS captions, SVG overlay templates, the FFmpeg graph |
 | `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
 | `runner/` | The stage contract, `LocalRunner`, the content-addressed cache, SQLite |
-| `verify/` | §9.1's deterministic checks, and the report they produce |
+| `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `golden/` | The deliberately bad fixture, and the findings it must produce |
 | `schemas/` | Generated — four JSON Schemas and the TypeScript types. Regenerate with `make generated` |
 | `tests/` | The invariants, the round-trip, the migration, the graph, and real renders |

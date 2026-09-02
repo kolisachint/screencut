@@ -66,6 +66,22 @@ class StageSpec:
     """Whether an LLM writes this artifact. Forces model id and prompt version into
     the cache key (§5.2). Phase 5 sets the first one."""
 
+    job_inputs: tuple[str, ...] = ()
+    """Job-level artifacts this per-profile stage reads, if they exist.
+
+    `verify` reads `trim`'s proposal for the override rate and works without it,
+    which is what "if they exist" means: a job that ran no job-level stages is
+    every fixture in this repository, and none of them has a trim proposal."""
+
+    requires: tuple[str, ...] = ()
+    """Job-level artifacts without which this stage has **nothing to do**.
+
+    Skipped rather than failed, and the difference matters. `verify_transcript`
+    diffs the render against the source transcript (§9.2); a job with no
+    transcript has no expectation to compare against, and inventing one from the
+    hand-authored captions of a fixture would be checking the spec against
+    itself."""
+
     apply: Callable[[EditSpec, Path], EditSpec] | None = None
     """How this stage's artifact becomes part of the spec, if it does.
 
@@ -105,11 +121,11 @@ class StageContext:
     """Cache keys of the job-level stages this run produced.
 
     A per-profile stage that reads a job-level artifact has to be invalidated when
-    that artifact changes, and most of them do not read one — `verify` reads
-    `trim`'s proposal for the override rate (§9.1) and is currently the only one.
-    Keys rather than contents, for the same reason a stage's upstream keys are
-    what appear in its own: the key already stands for everything the artifact
-    depends on."""
+    that artifact changes. Two do: `verify` reads `trim`'s proposal for the
+    override rate (§9.1), and `verify_transcript` reads the source transcript to
+    compute what this profile expects to hear (§9.2). Keys rather than contents,
+    for the same reason a stage's upstream keys are what appear in its own: the
+    key already stands for everything the artifact depends on."""
 
 
 # --- fingerprints ------------------------------------------------------------
@@ -451,6 +467,27 @@ def _run_render(request: StageRequest) -> StageResult:
     return StageResult(stage=request.stage, output=request.output)
 
 
+def _verify_transcript_fingerprint(ctx: StageContext) -> dict[str, Any]:
+    """What this profile expects to hear, and the transcript it expects it from.
+
+    The render arrives through the upstream key, and it is the *audio* this stage
+    measures — so a caption tweak, which changes the render's pixels and nothing
+    else, re-runs ASR for no gain. That is the one place §9.2 costs the review
+    loop something real (§8), and it is accepted rather than fixed: a key over the
+    rendered audio alone would have to be computed from a render that does not
+    exist yet.
+
+    The ASR settings are not here because they do not need to be. They are in
+    `transcribe`'s fingerprint, whose key is, and a stage that hashed them again
+    would be keeping a second copy of a number that already decides this key.
+    """
+    return {
+        "transcript": ctx.job_keys.get("transcribe"),
+        "edit": ctx.spec.edit.model_dump(mode="json"),
+        "duration_budget": ctx.profile.duration_budget,
+    }
+
+
 def _verify_fingerprint(ctx: StageContext) -> dict[str, Any]:
     """Verification reads the whole spec and the whole profile, so it re-runs
     whenever either moves. It is seconds of work over a render that already
@@ -458,7 +495,10 @@ def _verify_fingerprint(ctx: StageContext) -> dict[str, Any]:
 
     `trim`'s key is here because the override rate compares the surviving removals
     against what `trim` proposed, and a changed proposal changes that number
-    without changing the spec at all."""
+    without changing the spec at all. `verify_transcript`'s key arrives through
+    `depends_on` like any other upstream — and is absent from the key entirely on
+    a job that has no transcript to round-trip, which is correct: a stage that did
+    not run is not part of what this one read."""
     return {
         "spec": ctx.spec.model_dump(mode="json", exclude={"created_at"}),
         "profile": ctx.profile.model_dump(mode="json"),
@@ -466,11 +506,75 @@ def _verify_fingerprint(ctx: StageContext) -> dict[str, Any]:
     }
 
 
+def _run_verify_transcript(request: StageRequest) -> StageResult:
+    """§9.2: open-transcribe the render and diff it against what the edit expects.
+
+    The second of §5.3's two ASR calls, and the same one — open transcription,
+    pointed at the render instead of the recording. It holds weights, so it is its
+    own stage rather than part of `verify`: declaring the flag on `verify` would
+    have every report claim 4GB it does not use, and folding the two together
+    would re-run ASR whenever a §9.1 tunable moved.
+    """
+    from compile.timeline import project
+    from synth.asr import AsrUnavailable
+    from verify.transcript import RoundTrip, expected_transcript, round_trip
+
+    spec, profile, job_dir = _context(request)
+    source = Transcript.model_validate_json(
+        (job_dir / request.inputs["transcript"]).read_text()
+    )
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    timeline = project(spec, profile)
+    if not expected_transcript(source.words, timeline):
+        # A silent screen capture is an ordinary job (§5.3). Transcribing the
+        # render to confirm it says nothing would cost the most expensive stage
+        # there is to learn what the source transcript already said.
+        # `ran` stays true: the check ran and found nothing to hear, which is not
+        # the same as a check that could not run. Conflating them puts a warning
+        # on every silent job forever, and a warning that fires on correct
+        # behaviour gets ignored within a week.
+        result = RoundTrip(profile=profile.name, note="no speech in the source to round-trip")
+        out.write_text(result.model_dump_json(indent=2))
+        return StageResult(stage=request.stage, output=request.output, note="no speech")
+
+    asr = request.params["asr"]
+    try:
+        heard = transcribe(
+            job_dir / request.inputs["render"],
+            binary=asr["binary"],
+            models_dir=asr["models_dir"],
+            model=asr["model"],
+            language=asr["language"],
+        )
+    except AsrUnavailable as unavailable:
+        # §7.4's shape rather than a failure. The render is fine; the *check* could
+        # not run, and a job that refused to finish because a checker was missing
+        # would be a worse tool than one that says so on the report. Degraded, so
+        # the pipeline does not cache it — see `_run_job_stages`.
+        result = RoundTrip(profile=profile.name, ran=False, note=str(unavailable))
+        out.write_text(result.model_dump_json(indent=2))
+        return StageResult(
+            stage=request.stage, output=request.output, degraded=True,
+            note=f"round-trip not run: {unavailable}",
+        )
+
+    result = round_trip(profile.name, source.words, heard.words, timeline)
+    out.write_text(result.model_dump_json(indent=2))
+    return StageResult(
+        stage=request.stage,
+        output=request.output,
+        note=f"{len(result.real)} real differences in {result.expected_words} expected words",
+    )
+
+
 def _run_verify(request: StageRequest) -> StageResult:
     from compile.overlays import OverlayAsset
     from compile.timeline import project
     from plan.focus import CropPathPlan, ZoomPlan
     from verify import verify_render
+    from verify.transcript import RoundTrip
 
     spec, profile, job_dir = _context(request)
     raw = json.loads((job_dir / request.inputs["focus"]).read_text())
@@ -494,9 +598,16 @@ def _run_verify(request: StageRequest) -> StageResult:
         if proposal_path and (job_dir / proposal_path).is_file()
         else None
     )
+    round_trip_path = request.inputs.get("round_trip")
+    round_trip = (
+        RoundTrip.model_validate_json((job_dir / round_trip_path).read_text())
+        if round_trip_path and (job_dir / round_trip_path).is_file()
+        else None
+    )
     report = verify_render(
         spec, profile, project(spec, profile), focus, job_dir / request.inputs["render"], assets,
         trim_proposals=proposals,
+        round_trip=round_trip,
     )
     out = job_dir / request.output
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -603,23 +714,34 @@ STAGES: dict[str, StageSpec] = {
             suffix=".mp4",
         ),
         StageSpec(
+            name="verify_transcript",
+            version=1,
+            depends_on=("render",),
+            fingerprint=_verify_transcript_fingerprint,
+            run=_run_verify_transcript,
+            requires=("transcribe",),
+            holds_local_weights=True,
+        ),
+        StageSpec(
             name="verify",
             version=1,
-            depends_on=("plan_focus", "compile", "render"),
+            depends_on=("plan_focus", "compile", "render", "verify_transcript"),
             fingerprint=_verify_fingerprint,
             run=_run_verify,
+            job_inputs=("trim",),
         ),
     )
 }
 
-ORDER: tuple[str, ...] = ("plan_focus", "compile", "render", "verify")
-"""Topological order. Four stages do not need a sort; thirty will."""
+ORDER: tuple[str, ...] = ("plan_focus", "compile", "render", "verify_transcript", "verify")
+"""Topological order. Five stages do not need a sort; thirty will."""
 
 #: What each stage calls its upstream artifacts in `StageRequest.inputs`.
 INPUT_NAMES: dict[str, str] = {
     "plan_focus": "focus",
     "compile": "compile",
     "render": "render",
+    "verify_transcript": "round_trip",
     "verify": "verify",
 }
 

@@ -26,6 +26,7 @@ from spec import Encoder
 from spec.focus import FocusKind
 from spec.migrations import load_spec_file
 from synth.asr import model_path
+from verify.report import Severity
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
@@ -110,6 +111,23 @@ def test_a_silent_recording_renders_both_profiles_and_says_it_found_no_words(bun
 
     assert load_spec_file(job / "spec.json").captions == []
     assert [o.stage for o in result.outcomes if o.profile == "job"] == list(JOB_ORDER)
+
+
+@needs_ffmpeg
+def test_a_silent_take_round_trips_per_profile_without_transcribing_its_render(bundle, tmp_path):
+    """§9.2 runs on an ingested job because that is the only kind with a transcript
+    to diff against — and on a silent one it costs nothing, because the source
+    transcript already says there is nothing to hear."""
+    job = tmp_path / "job09"
+    cli_main(["ingest", str(bundle), "--out", str(job)])
+    _silence(job)
+
+    result = run_job(job, db_path=tmp_path / "screencut.db", encoder=Encoder.SOFTWARE)
+    ran = [o for o in result.outcomes if o.stage == "verify_transcript"]
+    assert len(ran) == 2, "one per profile: two profiles expect different audio"
+    for report in result.reports.values():
+        finding = next(f for f in report.findings if f.check == "transcript_round_trip")
+        assert finding.severity is Severity.INFO and "no speech" in finding.message
 
 
 @needs_ffmpeg

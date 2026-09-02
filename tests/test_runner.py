@@ -236,9 +236,15 @@ def test_a_missing_artifact_is_a_miss_even_with_a_row_in_the_database(job, datab
 
 
 @needs_ffmpeg
-def test_force_reruns_everything(job, database):
+def test_force_reruns_every_stage_this_job_has(job, database):
+    """Every stage the job runs, which is not every stage there is.
+
+    A fixture arrives with a complete spec and runs no job-level stages, so it has
+    no transcript and `verify_transcript` has nothing to diff the render against
+    (§9.2). `--force` re-runs work; it does not invent it."""
     go(job, database)
-    assert len(go(job, database, force=True).ran()) == len(ORDER)
+    ran = go(job, database, force=True).ran()
+    assert [name.split("/")[1] for name in ran] == [s for s in ORDER if s != "verify_transcript"]
 
 
 @needs_ffmpeg
@@ -252,7 +258,7 @@ def test_the_job_record_carries_what_review_will_need(job, database):
         ).fetchall()
     assert row["status"] == "rendered" and row["spec_version"] >= 1
     assert json.loads(row["degradations"]) == [], "no stage degrades until phase 5 (§7.4)"
-    assert {r["stage"] for r in cached} == set(ORDER)
+    assert {r["stage"] for r in cached} == {s for s in ORDER if s != "verify_transcript"}
     assert {r["profile"] for r in cached} == {"shorts_9x16"}
 
 
