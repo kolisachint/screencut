@@ -12,7 +12,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from prefs import load_constraints, resolve_profile
+from prefs import Constraints, load_constraints, resolve_profile
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
 from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
@@ -45,7 +45,7 @@ class StageOutcome:
 
     def __str__(self) -> str:
         state = "cached " if self.cached else "ran    "
-        return f"{state}{self.profile:>12} {self.stage:<11} {self.cache_key[:12]}"
+        return f"{state}{self.profile:>12} {self.stage:<17} {self.cache_key[:12]}"
 
 
 @dataclass
@@ -86,6 +86,7 @@ def run_job(
     db_path = Path(db_path) if db_path else db.DEFAULT_DB_PATH
     names = profiles if profiles is not None else list(BUILTIN_PROFILES)
 
+    constraints = load_constraints()
     run = JobRun(job_id=spec.job_id)
     with db.connect(db_path) as connection:
         db.upsert_job(
@@ -102,7 +103,7 @@ def run_job(
             name if isinstance(name, RenderProfile) else resolve_profile(name) for name in names
         )
         spec, job_paths, job_keys = _run_job_stages(
-            run, connection, spec, resolved, job_dir, runner, force
+            run, connection, spec, resolved, job_dir, runner, force, constraints
         )
         for name in names:
             # A name goes through `constraints.yaml`; a profile object arrives already
@@ -110,7 +111,8 @@ def run_job(
             # shorter" is one edited field on a profile rather than a new named one.
             profile = name if isinstance(name, RenderProfile) else resolve_profile(name)
             _run_profile(
-                run, connection, spec, profile, job_dir, runner, encoder, force, job_paths, job_keys
+                run, connection, spec, profile, job_dir, runner, encoder, force,
+                constraints, job_paths, job_keys,
             )
         db.upsert_job(
             connection,
@@ -131,6 +133,7 @@ def _run_job_stages(
     job_dir: Path,
     runner: LocalRunner,
     force: bool,
+    constraints: Constraints,
 ) -> tuple[EditSpec, dict[str, str], dict[str, str]]:
     """Run what `job.json` asks for, once, and fold the results into the spec.
 
@@ -144,7 +147,7 @@ def _run_job_stages(
         return spec, {}, {}
 
     context = JobContext(
-        spec=spec, profiles=profiles, job_dir=job_dir, constraints=load_constraints()
+        spec=spec, profiles=profiles, job_dir=job_dir, constraints=constraints
     )
     keys: dict[str, str] = {}
     paths: dict[str, str] = {}
@@ -235,6 +238,7 @@ def _run_profile(
     runner: LocalRunner,
     encoder: Encoder | None,
     force: bool,
+    constraints: Constraints,
     job_paths: dict[str, str] | None = None,
     job_keys: dict[str, str] | None = None,
 ) -> None:
@@ -251,6 +255,13 @@ def _run_profile(
 
     for name in ORDER:
         stage = STAGES[name]
+        if any(required not in job_paths for required in stage.requires):
+            # Nothing for it to read, so nothing for it to say. `verify_transcript`
+            # on a fixture is the case: no `transcribe` ran, so there is no
+            # transcript to diff the render against (§9.2). A skipped stage
+            # contributes no key and no input to its dependents, which is exactly
+            # right — it is not part of what they read.
+            continue
         # A stage's inputs include its upstream stages' keys, which is how bumping
         # one stage_version invalidates that stage and its dependents — and nothing
         # else, since a sibling's key is not in anybody's inputs.
@@ -259,7 +270,11 @@ def _run_profile(
             stage_version=stage.version,
             inputs={
                 "self": stage.fingerprint(context),
-                "upstream": {dependency: keys[dependency] for dependency in stage.depends_on},
+                "upstream": {
+                    dependency: keys[dependency]
+                    for dependency in stage.depends_on
+                    if dependency in keys
+                },
             },
             params={},
             model_backed=stage.model_backed,
@@ -278,24 +293,41 @@ def _run_profile(
                     **{
                         INPUT_NAMES[dependency]: paths[dependency]
                         for dependency in stage.depends_on
+                        if dependency in paths
                     },
-                    # `verify` reads `trim`'s proposal for the override rate. Its
-                    # key is in the fingerprint, so a changed proposal re-verifies.
-                    **({"trim": job_paths["trim"]} if name == "verify" and "trim" in job_paths else {}),
+                    # Job-level artifacts a per-profile stage reads: `trim`'s
+                    # proposal for the override rate (§9.1), the source transcript
+                    # for the round-trip (§9.2). Their keys are in the
+                    # fingerprints, so a changed proposal re-verifies.
+                    **{
+                        JOB_INPUT_NAMES[wanted]: job_paths[wanted]
+                        for wanted in (*stage.job_inputs, *stage.requires)
+                        if wanted in job_paths
+                    },
                 },
-                params={"profile": profile.model_dump(mode="json"), "encoder": context.encoder.value},
+                params={
+                    "profile": profile.model_dump(mode="json"),
+                    "encoder": context.encoder.value,
+                    "asr": constraints.asr.model_dump(mode="json"),
+                },
                 output=str(artifact),
             )
-            runner.run(request, holds_local_weights=stage.holds_local_weights)
-            db.record_artifact(
-                connection,
-                cache_key=key,
-                job_id=spec.job_id,
-                stage=name,
-                stage_version=stage.version,
-                profile=profile.name,
-                path=str(artifact),
-            )
+            result = runner.run(request, holds_local_weights=stage.holds_local_weights)
+            if result.degraded:
+                # Same rule as the job-level stages, for the same reason: a
+                # degraded artifact is what the stage produced because it could
+                # not run, and caching it makes one missing checker permanent.
+                run.degradations.append(f"{profile.name}/{name}: {result.note or 'degraded'}")
+            else:
+                db.record_artifact(
+                    connection,
+                    cache_key=key,
+                    job_id=spec.job_id,
+                    stage=name,
+                    stage_version=stage.version,
+                    profile=profile.name,
+                    path=str(artifact),
+                )
         run.outcomes.append(
             StageOutcome(stage=name, profile=profile.name, cache_key=key, path=str(artifact), cached=cached)
         )

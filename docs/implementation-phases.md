@@ -3,10 +3,11 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phase 0 has been run and phases 1 to 5 are built, with phase 6's deterministic layer among
-them. Two phases carry an asterisk: phase 4 has no real take and phase 5 has never called
-a model, both because of what is not installed on the machine this was built on. Each
-section says so and marks which of its exit criteria that leaves open. Its measured results are in [`environment-findings.md`](environment-findings.md), and
+Phase 0 has been run and phases 1 to 6 are built. Three phases carry a caveat rather than
+a clean finish: phase 4 has no real take, phase 5 has never called a model, and phase 6's
+transcript round-trip has never met speech — all three because of what is not installed on
+the machine this was built on. Each section says so and marks which of its exit criteria
+that leaves open. Its measured results are in [`environment-findings.md`](environment-findings.md), and
 phases 4, 5 and 8 should be read alongside it. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
@@ -504,16 +505,17 @@ failure.
 
 ---
 
-## Phase 6 — Verification — **deterministic layer built**
+## Phase 6 — Verification — **built, less the real speech**
 
 **Goal:** stop garbage reaching a person.
 
-**Built out of order, and deliberately.** §9.1's checks need a spec, a profile and
+**Built in two pieces, and deliberately.** §9.1's checks need a spec, a profile and
 a render, and nothing else — not real media, not a model. They were pulled forward
-because they are what will catch problems on the *first* real recording, which is
-when nobody yet knows what to look for. §9.2's transcript round-trip and §9.3's
-perceptual layer stay where they are: both need something phase 0 has not chosen
-yet.
+into phase 5 because they are what will catch problems on the *first* real
+recording, which is when nobody yet knows what to look for. §9.2's transcript
+round-trip waited for phase 4 to choose an ASR backend, and lands here. §9.3's
+perceptual layer stays where it is: add it once you know which real failures the
+first two miss.
 
 **Build**
 
@@ -532,11 +534,23 @@ yet.
 
 **Exit criteria**
 
-- Every check fires on the broken fixture and none fires on the good one.
+- Every check fires on the broken fixture and none fires on the good one. — **met** for
+  §9.1, with the two §11 breakages a spec cannot express exercised against hand-built
+  inputs instead (`golden/README.md` says which and why). §9.2 joins them: the synthetic
+  fixture's audio is a test tone, so no fixture can mispronounce a word it never speaks,
+  and the round-trip is exercised against constructed transcripts.
 - A correctly edited job reports zero real differences despite the rendered audio
   differing from the raw transcript. This is the check on the check, and it is the one
-  that decides whether §9.2 stays useful once phase 5 exists.
-- The report is legible enough to act on without reading the code.
+  that decides whether §9.2 stays useful once phase 5 exists. — **met against a
+  constructed transcript**, and it is the first test in
+  `tests/test_verify_transcript.py`: an edit that drops half the words reports zero real
+  differences and puts the other number — what the raw transcript would have shown — on
+  the report beside it. Met against *speech*: open, and it stays open until there is a
+  real recording, along with `SEAM_TOLERANCE_S` and `WER_CEILING`.
+- The report is legible enough to act on without reading the code. — **met.** A failing
+  round-trip names the first real difference and where in the render it is; a passing one
+  says how much of the render the edit is responsible for, because "0 real differences"
+  alone reads the same as a check that ran against nothing.
 
 **Not in this phase:** the VLM perceptual layer. Add it once you know which real failures
 the deterministic checks miss.
@@ -560,6 +574,63 @@ and the fixture's own highlight box sat on top of the caption. The first is fixe
 one shared rounding helper; the second by moving the fixture's target, because a
 good fixture has to actually be good or the check fires every run and gets ignored
 within a week.
+
+### The round-trip, and what it cost
+
+**§9.2 is a second stage, not a second check.** It transcribes the *render*, so it
+holds 4GB of weights (environment findings §5) and `verify` does not. One stage
+with the flag set would have every report claim memory it never used, and would
+re-run ASR whenever a §9.1 tunable moved. So `verify_transcript` runs between
+`render` and `verify`, and `verify` folds its result into the same report.
+
+**It is skipped rather than failed on a job that has no transcript,** which is
+every fixture in this repository. There is nothing dishonest available to compare
+against: a fixture's captions are hand-authored, so diffing the render against
+them would be checking the spec against itself and passing every time. Skipping a
+stage turned out to need one change in the pipeline — a skipped stage contributes
+no key and no input to its dependents — and that is the correct reading rather
+than a workaround, since a stage that did not run is not part of what the next one
+read.
+
+**The second class of difference needed pinning down before it could be coded.**
+"A range `EditDecisions` accounts for" has a wrong reading that looks right: that
+removed material turning up in the render is expected. It is the opposite — audible
+removed material means the cut did not happen, which is the loudest failure this
+check can find. What the edit actually accounts for is the **seam**: a splice joins
+two stretches that were never adjacent, and the word either side of it can lose its
+onset or its tail. Differences within `SEAM_TOLERANCE_S` of a cut are the edit
+working; everything else is the third class.
+
+**The end of the timeline is not a seam,** and that asymmetry is load-bearing.
+Truncated narration is one of the five failures §9.2 names, and excusing
+differences at the last boundary would excuse exactly it.
+
+**One formula ended up written twice.** `EditSpec.transcript_after_edit` already
+computed the expected transcript from the spec's caption words;
+`verify.transcript.expected_transcript` computes the same selection from the ASR
+transcript through the projected timeline, because a finding has to say *where* it
+is and the spec deliberately carries no output time (§4.5). Rather than delete
+either, `tests/test_verify_transcript.py` checks them against each other — the
+remedy `AGENTS.md` already prescribes for this exact trap.
+
+**A silent job briefly warned on every run.** The first cut wrote `ran=False` for
+both "the check could not run" and "the check ran and found nothing to hear", so a
+screen capture with the mic off — an ordinary job under §5.3 — carried a warning
+forever. They are different states and the report says so: the first is a WARN
+about a missing checker, the second an INFO about a silent take.
+
+**What the round-trip has not met is speech.** `SEAM_TOLERANCE_S` and
+`WER_CEILING` are the two numbers here that a real recording will move, and
+neither has seen one — the same standing debt as `plan_captions`'s `PAUSE_S` and
+the phase-2 focus tunables. The mechanism is exercised end to end: audio
+extraction, the phase-0 invocation, the parse, the diff and the artifact all run
+in CI against a `whisper-cli` stand-in on `PATH`, in the same shape phase 5 uses
+for the agent, alongside the degradation path and the silent-take path. That
+tests our code and tests nothing about recognition, which is the half the
+remaining exit criterion is for. The one cost already visible without speech is that the
+round-trip is keyed on the render, so a caption tweak re-runs ASR even though it
+changed no audio. A key over the rendered audio alone would fix it and cannot be
+computed, because the key is needed before the render exists.
 
 ---
 

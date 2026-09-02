@@ -1,9 +1,16 @@
-"""The deterministic checks (architecture.md §9.1).
+"""The checks (architecture.md §9.1 and §9.2).
 
 Arithmetic, all of it — and a check a model can talk its way out of is not a
 check. Three of them earn their place by catching failures that are invisible in
 a still frame: crop judder, a cut landing mid-word, and a budget overrun that
 would otherwise render long in silence.
+
+§9.2's transcript round-trip is the one check here that measures something a
+model produced, and it is still arithmetic: the diff and its classification are
+in `verify/transcript.py` and the judgement is a word error rate against a
+ceiling. The transcription it diffs comes from ASR, which is a *measurement* of
+the render rather than an opinion about it — the same relationship `probe` has to
+the container.
 
 Each check returns findings rather than raising, so one failure does not hide the
 rest. Under decision #12 the whole job is reviewed at the end, and a report that
@@ -27,6 +34,7 @@ from spec.types import TIME_EPS, Rect
 
 from verify.probe import Loudness, MediaFacts, measure_loudness, probe
 from verify.report import Finding, Severity, VerificationReport
+from verify.transcript import WER_CEILING, RoundTrip
 
 DURATION_TOLERANCE_S = 0.25
 """How far a render may sit from the timeline it was projected from.
@@ -47,6 +55,7 @@ def verify_render(
     render: Path,
     assets: list[OverlayAsset] | None = None,
     trim_proposals: list[Removal] | None = None,
+    round_trip: RoundTrip | None = None,
 ) -> VerificationReport:
     findings: list[Finding] = []
     findings += check_render_integrity(timeline, render)
@@ -58,6 +67,7 @@ def verify_render(
     findings += check_budget(timeline, profile, spec)
     findings += check_cuts_land_between_words(spec)
     findings += check_trim_composition(spec, trim_proposals)
+    findings += check_transcript(round_trip)
     if assets is not None:
         findings += check_overlays(timeline, focus, profile, spec, assets)
     return VerificationReport(
@@ -412,3 +422,77 @@ def check_trim_composition(
             value=rejected / len(proposals),
         ))
     return findings
+
+
+# --- what the render says (§9.2) ---------------------------------------------
+
+
+def check_transcript(round_trip: RoundTrip | None) -> list[Finding]:
+    """§9.2's verdict, over the third class of difference only.
+
+    Three findings rather than one, because the interesting thing about a passing
+    round-trip is *why* it passed. `transcript_edit` and `transcript_vs_raw` are
+    numbers, not verdicts: they say how much of the rendered audio the edit is
+    responsible for, and a report that said only "0 real differences" would be
+    indistinguishable from a check that ran against nothing.
+    """
+    if round_trip is None:
+        return []
+    if not round_trip.ran:
+        # Not a failure of the render. §9.2 could not be measured, and a report
+        # that quietly omitted the check would read as a render that passed it.
+        return [Finding(check="transcript_round_trip", severity=Severity.WARN,
+                        message=round_trip.note or "the round-trip did not run")]
+    if not round_trip.expected_words:
+        # Ran, and found nothing to hear. A silent screen capture is an ordinary
+        # job (§5.3), so this is a note rather than a warning.
+        return [Finding(check="transcript_round_trip", severity=Severity.INFO,
+                        message=round_trip.note or "no speech in the source to round-trip")]
+
+    findings: list[Finding] = []
+    real, seam = round_trip.real, round_trip.at_seam
+    wer = round_trip.wer
+    if wer > WER_CEILING:
+        findings.append(_fail(
+            "transcript_round_trip",
+            f"{len(real)} of {round_trip.expected_words} expected words differ away from any "
+            f"cut, first {_where(real[0])}",
+            value=wer, limit=WER_CEILING,
+        ))
+    else:
+        findings.append(_ok(
+            "transcript_round_trip",
+            f"the render says what the edit expects; {len(real)} real differences in "
+            f"{round_trip.expected_words} words",
+            value=wer, limit=WER_CEILING,
+        ))
+    # Both counts on the always-printed line. `summary()` counts passes rather than
+    # listing them, so a near miss — real differences under the ceiling — would
+    # otherwise leave a report saying nothing about them at all.
+    findings.append(Finding(
+        check="transcript_edit", severity=Severity.INFO,
+        message=f"{len(seam)} differences sit on a cut, which the edit accounts for; "
+                f"{len(real)} {'sits' if len(real) == 1 else 'sit'} elsewhere, "
+                f"in {round_trip.expected_words} expected words",
+        value=len(seam),
+    ))
+    findings.append(Finding(
+        check="transcript_vs_raw", severity=Severity.INFO,
+        message=f"against the raw transcript this render would show "
+                f"{round_trip.raw_differences} differences; that is the edit, not a fault",
+        value=round_trip.raw_differences,
+    ))
+    return findings
+
+
+def _where(difference) -> str:
+    """A difference in words a person can act on.
+
+    "heard as '-'" is what a uniform format produces for an omission, and it reads
+    like a bug in the checker rather than a fault in the render."""
+    at = f"at {difference.at:.2f}s"
+    if difference.kind == "omission":
+        return f"{at}: {difference.expected!r} is not in the render"
+    if difference.kind == "insertion":
+        return f"{at}: {difference.actual!r} is in the render and not in the edit"
+    return f"{at}: {difference.expected!r} came out as {difference.actual!r}"

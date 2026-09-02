@@ -35,7 +35,7 @@ put it in the design first.
 | `plan/` | Planners: `plan_focus`, `plan_captions`, `trim` deterministic; `plan_edit` the one model stage |
 | `synth/` | ASR and TTS stages. `asr.py` is open transcription; `align` is phase 8 (§5.3) |
 | `compile/` | Time projection, ASS captions, SVG overlays, the FFmpeg graph |
-| `verify/` | §9.1's deterministic checks and the report |
+| `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `runner/` | Stage contract, `LocalRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
 | `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles |
 | `golden/` | The deliberately bad fixture and the findings it must produce |
@@ -103,6 +103,7 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | Job-level stages run before the per-profile ones, never interleaved | `runner/pipeline.py` — they rewrite the spec the others fingerprint |
 | No `duration_budget` reaches a model; tiering is aspect-independent | `plan/edit.py`, §4.4.1; the fingerprint omits profiles too |
 | A degraded artifact is never cached | `runner/pipeline.py` — caching it makes one lost network permanent |
+| §9.2 diffs the render against the *expected* transcript, never the raw one | `verify/transcript.py`; the raw diff is a number beside it, not the verdict |
 | Generated files match the models | `make check-generated`, `tests/test_generated.py` |
 
 ## Conventions
@@ -136,7 +137,11 @@ Compare in pixels, which is the space placement happens in.
 and as Python (for overlay projection). `tests/test_compile_graph.py` evaluates
 the generated expression against the Python one. If you duplicate a formula across
 a language boundary, check them against each other — do not trust the comment
-saying they match.
+saying they match. The expected transcript is the second instance:
+`EditSpec.transcript_after_edit` computes it from the spec's caption words and
+`verify.transcript.expected_transcript` from the ASR transcript through the
+projected timeline, because §9.2 needs output timings the spec does not carry.
+Same remedy — `tests/test_verify_transcript.py` asserts they agree.
 
 **Cache fingerprints that read too much.** A stage hashes *what it reads*. Hashing
 the whole spec is simpler and makes a caption tweak invalidate `plan_focus`, which
@@ -181,6 +186,12 @@ overlap with `trim`'s proposal, never taken from the fragment.
 run*. Cache it and one lost network is permanent — every later run serves the degraded
 edit with the network back up and nothing saying why.
 
+**"Could not run" and "ran and found nothing" are different states.** `verify_transcript`
+wrote one flag for both, so a screen capture with the mic off — an ordinary job under §5.3
+— carried a warning about a missing checker forever. Same family as the check that fires
+on every correct job: wherever a stage can be inapplicable as well as broken, the report
+has to be able to say which.
+
 **An FFmpeg option baked into a cached artifact.** `compile` writes the whole command into
 its manifest and `render` replays it, so a cached compile plus a toolchain upgrade replays
 an option the new binary does not have. Anything that belongs to the *binary* rather than
@@ -188,10 +199,9 @@ to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
 ## What is built, and what is blocked
 
-Phases 1–5 are built, plus §9.1's deterministic checks pulled forward from phase 6.
-Phase 0 has been run: `docs/environment-findings.md` holds the measured numbers, and
-everything phase 4 was waiting on is settled — Cap's cursor format, `whisper.cpp` as
-the ASR backend, and the memory budget per stage.
+Phases 1–6 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
+measured numbers, and everything phase 4 was waiting on is settled — Cap's cursor
+format, `whisper.cpp` as the ASR backend, and the memory budget per stage.
 
 **What is still missing is a real recording and a real model call.** Phases 4 and 5 built
 the whole path and ran it against `ingest/cap_fixture.py` — a bundle in Cap's own on-disk
@@ -203,7 +213,10 @@ same thing as the real one:
 - Nothing is in `golden/` but the broken fixture. Promoting a real take is phase 4's one
   unfinished build item.
 - ASR has run against a test tone, not speech. The invocation, the parse and the stage are
-  exercised end to end; recognition accuracy is not.
+  exercised end to end; recognition accuracy is not. §9.2's round-trip inherits that
+  exactly — its happy path runs in CI against a `whisper-cli` stand-in, the same shape
+  as phase 5's agent stand-in — but `SEAM_TOLERANCE_S` and `WER_CEILING` are guesses
+  until a real recording moves them.
 - **No model has run.** `hoocode` is not installed here, so `plan_edit` has only ever
   taken §7.4's degradation path or run against the scripted stand-in in
   `tests/test_plan_edit.py`. That stand-in tests our code end to end and tests nothing

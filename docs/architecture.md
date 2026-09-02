@@ -1,16 +1,18 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 5 built, plus §9.1's deterministic checks (`verify/`) pulled forward
-from phase 6 — the spec (`spec/`), the Cap adapter and fixture generators (`ingest/`),
-the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the model stage
-`plan_edit` (`plan/`), open transcription (`synth/`), the FFmpeg compiler (`compile/`),
-and the runner, cache, agent adapter and job record (`runner/`). `screencut ingest
-<take>.cap --out <job>` turns a recorder bundle into a job; `screencut run <job>` renders
-it to every profile, skips whatever the cache already holds, and verifies each render.
-Two things the design leans on have still not happened, both for want of what is installed
-on the machine this was built on: no *real* recording has been ingested, and no model has
-run — `plan_edit` has only ever taken §7.4's degradation path or a scripted stand-in. See
-[`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
+Status: phases 1 to 6 built — the spec (`spec/`), the Cap adapter and fixture generators
+(`ingest/`), the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the
+model stage `plan_edit` (`plan/`), open transcription (`synth/`), the FFmpeg compiler
+(`compile/`), verification through §9.2 (`verify/`), and the runner, cache, agent adapter
+and job record (`runner/`). `screencut ingest <take>.cap --out <job>` turns a recorder
+bundle into a job; `screencut run <job>` renders it to every profile, skips whatever the
+cache already holds, verifies each render, and — on a job with a transcript — diffs the
+rendered audio against what the edit says should be there. Three things the design leans
+on have still not happened, all for want of what is installed on the machine this was
+built on: no *real* recording has been ingested, no model has run (`plan_edit` has only
+ever taken §7.4's degradation path or a scripted stand-in), and §9.2 has never round-tripped
+speech. See [`implementation-phases.md`](implementation-phases.md) for what is built and
+what is next.
 
 ## 1. What this is
 
@@ -676,6 +678,22 @@ audio. Differences then fall into three classes:
 The third class is what this check exists for, and it now also catches a failure mode that
 did not previously exist: a cut applied at the wrong instant, which clips a word. That is
 invisible in a still frame and audible immediately.
+
+The second class needs saying precisely, because it has a wrong reading that looks right.
+It does **not** mean that removed material turning up in the render is expected — audible
+removed material means the cut did not happen, which is the loudest failure this check can
+find. It means the **seam**: a splice joins two stretches of audio that were never
+adjacent, so the word on either side of it can lose its onset or its tail and be misheard.
+A difference within one word-onset of a cut is the edit working; a difference anywhere else
+is the third class. The end of the timeline is deliberately not a seam, because truncated
+narration is one of the failures this check exists to catch.
+
+This runs as its own stage rather than inside `verify`, and for a §16 reason: transcribing
+the render holds model weights and the rest of verification holds none. Two stages keep the
+flag honest and keep a §9.1 tunable from re-running ASR. It is skipped on a job with no
+transcript — every synthetic fixture — because the only thing available to compare against
+there is the spec's own hand-authored captions, and a check that compares the spec to
+itself passes every time.
 
 ### 9.3 Perceptual
 
