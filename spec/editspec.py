@@ -24,7 +24,7 @@ from spec.audio import AudioTrack
 from spec.captions import CaptionBlock
 from spec.edit import EditDecisions, Tier
 from spec.focus import FocusTrack
-from spec.narration import Narration
+from spec.narration import Narration, NarrationSource
 from spec.origin import Stage, spec_field
 from spec.overlays import OverlayIntent
 from spec.source import Source
@@ -102,6 +102,22 @@ class EditSpec(SpecModel):
         return self
 
     # --- conveniences the compiler and verifier both want --------------------
+
+    @property
+    def narration_path(self) -> str | None:
+        """The file the narration is actually in, or None if there is none.
+
+        Phase 8 gives this document two possible audio spines and exactly one
+        rule for choosing between them, so the rule lives here rather than in
+        each of `compile`, `trim` and `transcribe` deciding for itself. A
+        synthesized narration is its own file, laid down from source t=0 (§4.5
+        permits one time base and this is it); a recorded one is the take's own
+        track; a screen capture with the mic off and no script has neither, which
+        is an ordinary job that renders captionless.
+        """
+        if self.narration.source is NarrationSource.SYNTHESIZED:
+            return self.narration.audio_path
+        return self.source.path if self.source.has_audio else None
 
     @property
     def transcript(self) -> str:

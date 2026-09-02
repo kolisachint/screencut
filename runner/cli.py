@@ -1,9 +1,16 @@
-"""`screencut ingest <recording>` and `screencut run <job>`.
+"""`screencut ingest <recording>`, `screencut narrate <job>` and `screencut run <job>`.
 
-Two commands because they answer to different things. `ingest` reads a recorder
-bundle once and turns it into a job directory; `run` renders whatever is in one,
-as many times as a correction cycle needs. Keeping them apart is what lets a job
-be re-rendered without the recorder's files still being on the machine.
+Three commands because they answer to different things. `ingest` reads a recorder
+bundle once and turns it into a job directory; `narrate` attaches a script and a
+voice to one; `run` renders whatever is in one, as many times as a correction
+cycle needs. Keeping them apart is what lets a job be re-rendered without the
+recorder's files still being on the machine.
+
+`narrate` is separate from `ingest` for a reason beyond tidiness. Decision #20
+permits synthesis of you and nobody else, and §1.1 says that boundary is a
+schema-and-config matter rather than a matter of intent — so it is a command a
+person runs deliberately, naming their own reference recording and writing a
+consent note, rather than a flag that could default its way into a job.
 """
 
 from __future__ import annotations
@@ -11,10 +18,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from spec.migrations import load_spec_file
 from spec.profiles import BUILTIN_PROFILES, Encoder
 
 from runner.pipeline import run_job
-from runner.stages import JOB_ORDER
+from runner.stages import RECORDED_STAGES
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,9 +43,23 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--job-id", default=None, help="Defaults to the job directory's name.")
     ingest.add_argument("--segment", type=int, default=0, help="Which recorded segment to take.")
 
+    narrate = subcommands.add_parser(
+        "narrate", help="Attach a script and a voice reference to a job, for synthesis (decision #20)."
+    )
+    narrate.add_argument("job", help="Job directory, from `ingest` or a fixture generator.")
+    narrate.add_argument("--script", required=True, help="Text file holding the narration script.")
+    narrate.add_argument("--voice", required=True, help="Your reference recording. Copied into the job.")
+    narrate.add_argument("--voice-text", required=True, help="What the reference recording says.")
+    narrate.add_argument(
+        "--consent", required=True,
+        help="Recorded on the job so decision #20's boundary is auditable rather than assumed.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "ingest":
         return _ingest(args)
+    if args.command == "narrate":
+        return _narrate(args)
     result = run_job(
         Path(args.job),
         args.profile,
@@ -76,12 +98,57 @@ def _ingest(args) -> int:
     spec = EditSpec(job_id=args.job_id or job_dir.name, source=source, focus=focus)
     (job_dir / "spec.json").write_text(spec.model_dump_json(indent=2) + "\n")
     JobConfig(
-        stages=list(JOB_ORDER), recorder="cap", recording=str(args.recording)
+        stages=list(RECORDED_STAGES), recorder="cap", recording=str(args.recording)
     ).write(job_dir)
 
     print(f"{spec.job_id}: {source.width}x{source.height} @ {source.fps:g}fps, {source.duration:.2f}s")
     print(f"  focus track: {len(focus.points)} points, {len(focus.clicks())} on clicks")
     print(f"  wrote {job_dir / 'spec.json'} and {job_dir / 'job.json'}")
+    return 0
+
+
+def _narrate(args) -> int:
+    """Turn a recorded job into a narrated one: script in, voice reference in.
+
+    The reference is *copied into the job directory* rather than pointed at. Every
+    path in a spec is relative to the job (§5.1), which is what lets a stage run on
+    a worker at all — and a voice reference that lived outside would be the one
+    input that silently did not travel.
+    """
+    import shutil
+
+    from runner.job import JobConfig
+    from runner.stages import SYNTHESIZED_STAGES
+    from spec.narration import Narration, NarrationSource
+
+    job_dir = Path(args.job)
+    spec = load_spec_file(job_dir / "spec.json")
+    script = Path(args.script).read_text().strip()
+
+    reference = Path("source") / f"voice{Path(args.voice).suffix or '.wav'}"
+    (job_dir / "source").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(args.voice, job_dir / reference)
+
+    narrated = spec.model_copy(
+        update={
+            "narration": Narration(
+                source=NarrationSource.SYNTHESIZED,
+                script=script,
+                voice_reference_path=str(reference),
+                voice_reference_text=args.voice_text,
+                voice_consent_note=args.consent,
+            )
+        }
+    )
+    (job_dir / "spec.json").write_text(narrated.model_dump_json(indent=2) + "\n")
+    previous = JobConfig.load(job_dir)
+    JobConfig(
+        stages=list(SYNTHESIZED_STAGES), recorder=previous.recorder, recording=previous.recording
+    ).write(job_dir)
+
+    print(f"{narrated.job_id}: {len(script.split())} words of script, voice from {reference}")
+    print(f"  stages: {' -> '.join(SYNTHESIZED_STAGES)}")
+    print(f"  consent: {args.consent}")
     return 0
 
 

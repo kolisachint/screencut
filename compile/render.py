@@ -76,7 +76,13 @@ def prepare(
     audio_commands = build_audio_commands(timeline, spec)
     ass = render_ass(timeline.captions, profile)
 
-    music_input = 1 if spec.audio.music_path else None
+    # Input order is source, narration, bed, then one per overlay asset, and the
+    # graph is written against these numbers rather than against the paths.
+    # Keeping the assignment here — in the one place that also builds the `-i`
+    # list — is what stops the two from disagreeing.
+    narration = spec.narration.audio_path
+    narration_input = 1 if narration else None
+    music_input = (2 if narration else 1) if spec.audio.music_path else None
     graph = build_graph(
         spec,
         profile,
@@ -91,6 +97,7 @@ def prepare(
             str(work_dir / AUDIO_COMMANDS_NAME) if audio_commands.strip() else None
         ),
         music_input=music_input,
+        narration_input=narration_input,
     )
 
     (job_dir / work_dir / GRAPH_NAME).write_text(graph)
@@ -100,6 +107,8 @@ def prepare(
 
     out_path = out_path or Path("renders") / f"{spec.job_id}_{profile.name}.mp4"
     inputs: list[str] = ["-i", spec.source.path]
+    if narration:
+        inputs += ["-i", narration]
     if spec.audio.music_path:
         inputs += ["-stream_loop", "-1", "-i", spec.audio.music_path]
     for asset in assets:

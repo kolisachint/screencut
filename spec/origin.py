@@ -38,6 +38,7 @@ class Stage(str, Enum):
     INGEST = "ingest"
     PLAN_FOCUS = "plan_focus"
     TRANSCRIBE = "transcribe"
+    TTS = "tts"
     ALIGN = "align"
     TRIM = "trim"
     PLAN_EDIT = "plan_edit"
@@ -64,6 +65,12 @@ STAGE_ORIGIN: dict[Stage, Origin] = {
     Stage.INGEST: Origin.DETERMINISTIC,
     Stage.PLAN_FOCUS: Origin.DETERMINISTIC,
     Stage.TRANSCRIBE: Origin.DETERMINISTIC,
+    # `tts` synthesizes audio, which is not deterministic; the one *spec field* it
+    # writes is a content-addressed path, which is. Origin classifies how §11.1
+    # checks a field, not how reproducible the stage's bytes are — and the audio's
+    # variance is caught by §9.2's round-trip, which listens to the render, rather
+    # than by comparing a path against a golden one.
+    Stage.TTS: Origin.DETERMINISTIC,
     Stage.ALIGN: Origin.DETERMINISTIC,
     Stage.TRIM: Origin.DETERMINISTIC,
     Stage.PLAN_CAPTIONS: Origin.DETERMINISTIC,

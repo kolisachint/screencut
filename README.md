@@ -17,7 +17,7 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 7 are built.** The data model everything else is written against;
+**Phases 1 to 8 are built.** The data model everything else is written against;
 the compiler that turns it into video — `plan_focus`, the time projection, ASS
 captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios at
 two different lengths; the runner that makes re-running cheap; and verification
@@ -48,14 +48,24 @@ edit of it, because the planners are cached and would otherwise write their answ
 over yours. Accepting records the spec per profile and the proposed→corrected diff, which
 is what the phase-10 learner reads.
 
-**Three things have not happened yet, and all are about what is installed rather
+**Phase 8 lets the narration come from a script.** `screencut narrate` attaches a
+script and your own reference recording to a job; `tts` reads the script in that
+voice, `align` puts the script's words on the audio's timings, and the rest of the
+pipeline does not change — a synthesized narration is laid down from source t=0 and
+the edit cuts it like any other audio. Decision #20 is the boundary and the schema
+holds it: no reference recording, no synthesis. Phase 0 measured F5-TTS at 0.11x
+realtime here, so `tts` is also the first stage that can run on another machine.
+
+**Four things have not happened yet, and all are about what is installed rather
 than what is written.** No *real* recording has been ingested — that needs a
 screen, a microphone and Cap on the machine doing the work — so the phase-2 focus
 tunables and `trim`'s thresholds have never met real footage. No model has run:
 `plan_edit` is exercised against a scripted stand-in, so whether its cuts are ones
-you would have made is still an open question. And the transcript round-trip has
+you would have made is still an open question. The transcript round-trip has
 never met speech: the mechanism runs end to end, but its two tolerances are
-guesses until a real recording moves them.
+guesses until a real recording moves them. And no voice has been synthesized — the
+narrated path runs against a stand-in for F5-TTS, which proves the plumbing and
+nothing about whether the result sounds like you.
 
 **Phase 0 has been run** on the target machine — a base-model M1 MacBook Air,
 8GB, fanless. Its four verdicts are in
@@ -66,8 +76,9 @@ numbers under `docs/measurements/` and the harness in `tools/`:
   in normalized coordinates — `FocusTrack`'s own space.
 - **ASR: `whisper.cpp`,** `large-v3` at 1.95x realtime and 3 984 MB, `medium` as
   the fallback. All three candidates emit the word-level timings §6.2 needs.
-- **F5-TTS is not viable locally** — 0.11x realtime at best. Phase 8 starts with
-  `RemoteRunner`.
+- **F5-TTS is not viable locally** — 0.11x realtime at best, and its MPS path
+  crashes on any text long enough to be chunked. Phase 8 built `RemoteRunner`
+  because of it, and `tts` is the one stage that asks for a worker.
 - **The agent CLI round-trips a schema** — 12/12 valid, though 11/12 arrive
   wrapped in a code fence, and latency runs 6–66 s per call.
 
@@ -82,6 +93,8 @@ make install     # the package and its dev dependencies
 make run         # a synthetic job through the whole pipeline (needs ffmpeg)
 make take        # a Cap-format take: generate it, ingest it, render it
                  # (needs whisper-cli and its weights; the others do not)
+make narrate     # a script read in a cloned voice over a silent capture (§8)
+                 # (needs F5-TTS as well as whisper-cli)
 make broken      # the deliberately bad fixture, so the checks are seen firing
 make review      # the review UI on http://127.0.0.1:8000 (§8)
 make check       # tests, generated-artifact drift, TypeScript typecheck
@@ -117,11 +130,12 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 | Path | What is in it |
 |---|---|
 | `spec/` | Pydantic models, field-origin metadata, migrations, JSON Schema and TypeScript emit |
-| `ingest/` | The recorder-event adapter and the synthetic fixture generator |
+| `ingest/` | The recorder-event adapter and the synthetic fixture generators, narrated and not |
 | `plan/` | `plan_focus` — the crop path and the zoom regions, both deterministic |
+| `synth/` | Open transcription, TTS, and forced alignment — §5.3's three ASR-shaped calls, kept apart |
 | `compile/` | The time projection, ASS captions, SVG overlay templates, the FFmpeg graph |
 | `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
-| `runner/` | The stage contract, `LocalRunner`, the content-addressed cache, SQLite |
+| `runner/` | The stage contract, `LocalRunner` and `RemoteRunner`, the content-addressed cache, SQLite |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
 | `golden/` | The deliberately bad fixture, and the findings it must produce |

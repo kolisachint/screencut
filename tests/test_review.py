@@ -25,7 +25,7 @@ from review import service
 from runner import db
 from runner.cli import main as cli_main
 from runner.pipeline import run_job
-from runner.stages import JOB_ORDER
+from runner.stages import RECORDED_STAGES
 from spec import Encoder, Tier
 from spec.corrections import (
     PROPOSED_NAME,
@@ -101,7 +101,7 @@ def reviewable(bundle, tmp_path, fake_agent):
 
 
 def planners_that_ran(run) -> set[str]:
-    return {name.split("/")[-1] for name in run.ran()} & {*JOB_ORDER, "plan_focus"}
+    return {name.split("/")[-1] for name in run.ran()} & {*RECORDED_STAGES, "plan_focus"}
 
 
 # --- the exit criteria -------------------------------------------------------
@@ -263,7 +263,7 @@ def test_the_correction_endpoint_says_what_ran_and_what_was_cached(client, revie
         "verify_transcript",
         "verify",
     }
-    assert set(JOB_ORDER) <= {name.split("/")[-1] for name in body["cached"]}
+    assert set(RECORDED_STAGES) <= {name.split("/")[-1] for name in body["cached"]}
     assert body["spec"]["edit"]["removals"] == []
     assert body["diff"]["changes"][0]["path"] == "edit.removals[2.000-3.000]"
 

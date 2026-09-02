@@ -39,6 +39,26 @@ class AsrConstraints(BaseModel):
     language: str = "en"
 
 
+class TtsConstraints(BaseModel):
+    """How the one permitted synthesis is invoked (decision #20, phase 8).
+
+    `python` rather than a binary: phase 0 measured F5-TTS through its API in an
+    environment of its own, and that is the invocation `synth/tts.py` is written
+    against. `device` is a real choice rather than a formality — MPS is 2.2x
+    faster than CPU and aborts as soon as the text needs more than one batch
+    (environment findings §4), so a narration of any length is a CPU job on this
+    machine until that is fixed upstream."""
+
+    model_config = ConfigDict(extra="forbid")
+    backend: Literal["f5-tts"] = "f5-tts"
+    python: str = "python3"
+    device: Literal["cpu", "mps", "cuda"] = "cpu"
+    library_path: str | None = None
+    """macOS's FFmpeg lookup for torchcodec. Set only on the machine that needs it —
+    it is the same variable that breaks cairo elsewhere (environment findings §8)."""
+    reference_seconds: float = Field(default=10.0, gt=0.0)
+
+
 class TrimConstraints(BaseModel):
     """§4.6's tunables. Every one is learnable by median under §10."""
 
@@ -73,6 +93,7 @@ class Constraints(BaseModel):
 
     captions: CaptionConstraints = Field(default_factory=CaptionConstraints)
     asr: AsrConstraints = Field(default_factory=AsrConstraints)
+    tts: TtsConstraints = Field(default_factory=TtsConstraints)
     trim: TrimConstraints = Field(default_factory=TrimConstraints)
     agent: AgentConstraints = Field(default_factory=AgentConstraints)
     voice: VoiceConstraints = Field(default_factory=VoiceConstraints)

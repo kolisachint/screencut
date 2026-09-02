@@ -21,7 +21,7 @@ from prefs import load_constraints
 from runner.cli import main as cli_main
 from runner.job import JobConfig
 from runner.pipeline import run_job
-from runner.stages import JOB_ORDER
+from runner.stages import RECORDED_STAGES
 from spec import Encoder
 from spec.focus import FocusKind
 from spec.migrations import load_spec_file
@@ -110,7 +110,9 @@ def test_a_silent_recording_renders_both_profiles_and_says_it_found_no_words(bun
     assert result.verified, [f for r in result.reports.values() for f in r.failures]
 
     assert load_spec_file(job / "spec.json").captions == []
-    assert [o.stage for o in result.outcomes if o.profile == "job"] == list(JOB_ORDER)
+    # The recorded recipe, in order: an ingested take is narrated by whoever
+    # recorded it, so `tts` and `align` are not in this job (runner/stages.py).
+    assert [o.stage for o in result.outcomes if o.profile == "job"] == list(RECORDED_STAGES)
 
 
 @needs_ffmpeg

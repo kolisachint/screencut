@@ -1,7 +1,8 @@
 # screencut — see docs/architecture.md and docs/implementation-phases.md.
-.PHONY: help install schema types generated check-generated typecheck test fixture run take review broken check clean
+.PHONY: help install schema types generated check-generated typecheck test fixture run take narrate review broken check clean
 
 FIXTURE ?= data/fixtures/demo01
+NARRATED ?= data/fixtures/narrated01
 CAP ?= data/fixtures/take01.cap
 JOB ?= data/jobs/take01
 ENCODER ?= software
@@ -41,6 +42,10 @@ take:  ## Cap-format take -> job -> both renders. Needs whisper-cli + weights (s
 	python3 -m ingest.cap_fixture --out $(CAP)
 	python3 -m runner.cli ingest $(CAP) --out $(JOB)
 	python3 -m runner.cli run $(JOB) --encoder $(ENCODER)
+
+narrate:  ## Script -> narrated, captioned video (§8 of the phases doc). Needs F5-TTS + whisper-cli.
+	python3 -m ingest.narrated_fixture --out $(NARRATED)
+	python3 -m runner.cli run $(NARRATED) --encoder $(ENCODER)
 
 review:  ## Serve the review UI (§8). ENCODER must match how the jobs were rendered.
 	python3 -m review.app --encoder $(ENCODER)

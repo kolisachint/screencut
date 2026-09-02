@@ -34,8 +34,12 @@ from spec.captions import Word
 from spec.edit import EditDecisions, Removal, decisions_from_removals
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
+from spec.narration import NarrationSource
 from spec.profiles import Encoder, RenderProfile
+from spec.types import TIME_EPS
+from synth.align import align
 from synth.asr import Transcript, transcribe
+from synth.tts import audio_duration, synthesize
 
 from runner import agent
 from runner.cache import file_digest
@@ -50,6 +54,7 @@ class StageSpec:
     version: int
     """Bump to invalidate this stage and everything downstream of it, and nothing else."""
     depends_on: tuple[str, ...]
+    """What this stage reads, named by *provision* rather than by stage name."""
     fingerprint: Callable[["StageContext"], dict[str, Any]]
     run: Callable[[StageRequest], StageResult]
     suffix: str = ".json"
@@ -65,6 +70,31 @@ class StageSpec:
     model_backed: bool = False
     """Whether an LLM writes this artifact. Forces model id and prompt version into
     the cache key (§5.2). Phase 5 sets the first one."""
+
+    prefers_remote: bool = False
+    """Run this stage on a worker when one is configured (§5.1, decision #2).
+
+    One stage sets it, and phase 0 is why: F5-TTS on the target machine is 0.11x
+    realtime and its MPS path crashes on any text long enough to be chunked
+    (environment findings §4). Everything else is either fast enough here or
+    reads media that lives here, and shipping a 2 GB recording to save 20 seconds
+    of ASR is a worse trade than the one it undoes.
+
+    A flag rather than a policy: `runner/pipeline.py` still runs it locally when
+    no remote runner is given, which is what makes a machine with no worker able
+    to run the whole pipeline slowly rather than not at all."""
+
+    provides: str | None = None
+    """What this stage produces, for a dependent that does not care which stage
+    made it. Defaults to the stage's own name, which is the ordinary case.
+
+    Phase 8 is why it exists. Word timings reach `plan_captions`, `trim` and
+    `plan_edit` from `transcribe` on a recorded take and from `align` on a
+    synthesized one, and those two are alternatives within one job rather than
+    steps in a sequence (§5.3). Naming the dependency `transcript` says the true
+    thing — these stages want words with timings — where naming `transcribe`
+    would put an `if` about how the narration was made into every stage
+    downstream of it."""
 
     job_inputs: tuple[str, ...] = ()
     """Job-level artifacts this per-profile stage reads, if they exist.
@@ -82,14 +112,22 @@ class StageSpec:
     hand-authored captions of a fixture would be checking the spec against
     itself."""
 
-    apply: Callable[[EditSpec, Path], EditSpec] | None = None
+    apply: Callable[[EditSpec, Path, str], EditSpec] | None = None
     """How this stage's artifact becomes part of the spec, if it does.
+
+    Called with the job directory and the artifact's path *relative* to it: a
+    spec recording an absolute path stops being portable the moment the job
+    directory moves, which `runner/remote.py` does on every remote run.
 
     Principle 1 is that the spec is the system, so a stage that produces a spec
     *field* — `plan_captions` writes `EditSpec.captions` — has to put it there
     rather than leave a parallel document beside it for `compile` to prefer. Only
     job-level stages do this: rewriting the spec once the per-profile fingerprints
     have been taken would invalidate them behind their own backs."""
+
+    @property
+    def provision(self) -> str:
+        return self.provides or self.name
 
 
 @dataclass
@@ -167,6 +205,43 @@ def _transcribe_fingerprint(ctx: JobContext) -> dict[str, Any]:
     }
 
 
+def _tts_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """The script, the voice it is read in, and how it is synthesized.
+
+    Not the recording: `tts` never opens it. That is the whole discipline of a
+    fingerprint here — re-recording the screen must not re-synthesize an hour of
+    narration (environment findings §4), and it does not, because nothing about
+    the video is in this key.
+
+    The reference audio is hashed rather than named. Decision #20 permits
+    synthesis of you and nobody else, and a key over the *path* would serve the
+    old narration after the file behind that path was replaced — which is the one
+    substitution this system must never make silently.
+    """
+    narration = ctx.spec.narration
+    return {
+        "script": narration.script,
+        "voice_reference": file_digest(ctx.job_dir / narration.voice_reference_path),
+        "voice_reference_text": narration.voice_reference_text,
+        "tts": ctx.constraints.tts.model_dump(mode="json"),
+    }
+
+
+def _align_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """The script it aligns and the ASR that measures the timings.
+
+    The narration audio arrives through `tts`'s upstream key rather than being
+    hashed again — the key already stands for everything that produced the file.
+    The script is here in its own right even so: it is *both* an input to `tts`
+    and the ground truth this stage anchors to, and a spec whose script was
+    corrected in review must re-align even if the audio is unchanged.
+    """
+    return {
+        "script": ctx.spec.narration.script,
+        "asr": ctx.constraints.asr.model_dump(mode="json"),
+    }
+
+
 def _plan_captions_fingerprint(ctx: JobContext) -> dict[str, Any]:
     """Only the capacity the blocks are sized against, not the profiles themselves.
 
@@ -186,10 +261,15 @@ def _trim_fingerprint(ctx: JobContext) -> dict[str, Any]:
 
     The transcript arrives through the upstream key rather than being hashed
     again here, which is the difference between a fingerprint and a copy of the
-    inputs."""
+    inputs.
+
+    The media is whichever file the narration is in (`EditSpec.narration_path`),
+    because that is the one `detect_silence` opens. Hashing the recording on a
+    synthesized job would key this stage on a video whose audio it never
+    measures — and leave it *unkeyed* on the narration it does."""
+    narration = ctx.spec.narration_path
     return {
-        "source_digest": file_digest(ctx.job_dir / ctx.spec.source.path),
-        "has_audio": ctx.spec.source.has_audio,
+        "narration_digest": file_digest(ctx.job_dir / narration) if narration else None,
         "trim": ctx.constraints.trim.model_dump(mode="json"),
     }
 
@@ -209,9 +289,14 @@ def _plan_edit_fingerprint(ctx: JobContext) -> dict[str, Any]:
 def _compile_fingerprint(ctx: StageContext) -> dict[str, Any]:
     """The graph depends on the whole edit and the whole profile *except* the
     encoder — which is `render`'s to decide, so changing `crf` re-encodes without
-    recompiling."""
+    recompiling.
+
+    `narration` was excluded here until phase 8, correctly: it named a script the
+    graph never read. Now it names the audio input the graph is built around
+    (`compile/graph.py`), and an exclusion that was bookkeeping would have become
+    a cached graph pointed at the wrong file."""
     return {
-        "spec": ctx.spec.model_dump(mode="json", exclude={"created_at", "narration"}),
+        "spec": ctx.spec.model_dump(mode="json", exclude={"created_at"}),
         "profile": ctx.profile.model_dump(mode="json", exclude={"encode"}),
     }
 
@@ -226,8 +311,15 @@ def _render_fingerprint(ctx: StageContext) -> dict[str, Any]:
     """
     from compile.ffmpeg import graph_option_or_legacy
 
+    narration = ctx.spec.narration_path
     return {
         "source_digest": file_digest(ctx.job_dir / ctx.spec.source.path),
+        # The synthesized narration is a second media input, and a re-synthesis
+        # produces different audio under the same spec. `compile` hashes the spec
+        # and would not notice; this stage reads the file.
+        "narration_digest": (
+            file_digest(ctx.job_dir / narration) if narration and narration != ctx.spec.source.path else None
+        ),
         "music_digest": (
             file_digest(ctx.job_dir / ctx.spec.audio.music_path) if ctx.spec.audio.music_path else None
         ),
@@ -281,6 +373,115 @@ def _run_transcribe(request: StageRequest) -> StageResult:
     )
 
 
+def _run_tts(request: StageRequest) -> StageResult:
+    """The one synthesis this design permits (decision #20, §1.1).
+
+    No degradation path, and §7.4's table says so in the same row-shape as
+    `script_draft`: a job whose narration is synthesized has no audio to fall
+    back to. Rendering it silent would be the worst of the available answers,
+    because a silent video looks finished.
+    """
+    spec, job_dir = _job_context(request)
+    narration = spec.narration
+    if narration.source is not NarrationSource.SYNTHESIZED:
+        raise RuntimeError(
+            "tts ran on a job whose narration is recorded. The take's own audio is "
+            "its narration (§5.3); remove the stage from job.json rather than "
+            "synthesizing over a voice that is already there."
+        )
+
+    settings = request.params["tts"]
+    out = job_dir / request.output
+    result = synthesize(
+        narration.script or "",
+        reference=job_dir / narration.voice_reference_path,
+        reference_text=narration.voice_reference_text or "",
+        out_wav=out,
+        python=settings["python"],
+        device=settings["device"],
+        library_path=settings.get("library_path"),
+        reference_seconds=settings["reference_seconds"],
+    )
+    note = f"{result.duration:.2f}s of narration on {result.device}"
+    if result.infer_seconds:
+        note += f", {result.duration / result.infer_seconds:.2f}x realtime"
+    if not result.clean_exit:
+        # Phase 0's teardown crash (environment findings §4). Worth saying out
+        # loud on the job record: the audio is good, and the next PyTorch may
+        # make this a real failure rather than a cosmetic one.
+        note += "; the backend exited nonzero after writing good audio"
+    return StageResult(stage=request.stage, output=request.output, note=note)
+
+
+def _apply_narration(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
+    """The synthesized narration becomes the spec's audio spine.
+
+    Principle 1: a wav sitting in `stages/` that only the pipeline knew about
+    would be invisible to `compile`, to verification and to golden replay alike.
+    """
+    return EditSpec.model_validate(
+        {
+            **spec.model_dump(mode="json"),
+            "narration": {**spec.narration.model_dump(mode="json"), "audio_path": artifact},
+        }
+    )
+
+
+def _run_align(request: StageRequest) -> StageResult:
+    """Forced alignment of the script against the narration that reads it (§5.3).
+
+    Open transcription of the synthesized audio, then the script anchored to what
+    came back — see `synth/align.py` for why that rather than WhisperX. The
+    artifact is a `Transcript`, the same document `transcribe` writes, because
+    everything downstream wants words with timings and should not care which of
+    §5.3's calls produced them.
+    """
+    spec, job_dir = _job_context(request)
+    asr = request.params["asr"]
+    audio = job_dir / request.inputs["narration"]
+
+    heard = transcribe(
+        audio,
+        binary=asr["binary"],
+        models_dir=asr["models_dir"],
+        model=asr["model"],
+        language=asr["language"],
+    )
+    spoken = audio_duration(audio)
+    if spoken > spec.source.duration + TIME_EPS:
+        # Fail here, where both numbers are in hand and the remedy is obvious.
+        # Left alone it surfaces two stages later as a caption block past the end
+        # of the source (`EditSpec._within_source`), which is true and useless.
+        # Holding the last frame to cover the overrun would be a design decision
+        # about synthesizing video, and this project does not make those in a
+        # stage (§1.1).
+        raise RuntimeError(
+            f"the narration is {spoken:.2f}s and the recording is {spec.source.duration:.2f}s. "
+            f"Shorten the script or record more screen — there is nothing to show under "
+            f"the last {spoken - spec.source.duration:.2f}s."
+        )
+
+    alignment = align(spec.narration.script or "", heard.words, spoken)
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        Transcript(
+            words=alignment.words,
+            language=asr["language"],
+            backend="align",
+            model=asr["model"],
+        ).model_dump_json(indent=2)
+    )
+    return StageResult(
+        stage=request.stage,
+        output=request.output,
+        note=(
+            f"{len(alignment.words)} script words, "
+            f"{alignment.anchored} anchored ({alignment.coverage:.0%})"
+        ),
+    )
+
+
 def _run_plan_captions(request: StageRequest) -> StageResult:
     spec, job_dir = _job_context(request)
     transcript = Transcript.model_validate_json(
@@ -299,10 +500,13 @@ def _run_plan_captions(request: StageRequest) -> StageResult:
     return StageResult(stage=request.stage, output=request.output, note=f"{len(blocks)} blocks")
 
 
-def _apply_captions(spec: EditSpec, artifact: Path) -> EditSpec:
+def _apply_captions(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
     from spec.captions import CaptionBlock
 
-    blocks = [CaptionBlock.model_validate(entry) for entry in json.loads(artifact.read_text())]
+    blocks = [
+        CaptionBlock.model_validate(entry)
+        for entry in json.loads((job_dir / artifact).read_text())
+    ]
     # Round-tripped through validation rather than assigned, so a planner that
     # produced overlapping or out-of-bounds blocks fails here, beside the stage
     # that made them — `model_copy` would take them without a word and let
@@ -321,13 +525,17 @@ def _run_trim(request: StageRequest) -> StageResult:
     words = [Word(t_in=w.t_in, t_out=w.t_out, text=w.text) for w in transcript.words]
     tunables = TrimTunables(**request.params["trim"])
 
+    # Whichever file the narration is in (§5.3): the take's own track, or the
+    # wav `tts` wrote. Measuring the recording on a synthesized job would look
+    # for dead air in an audio track the render does not use.
+    narration = spec.narration_path
     silences = (
         detect_silence(
-            job_dir / spec.source.path,
+            job_dir / narration,
             silence_db=tunables.silence_db,
             min_silence_ms=tunables.min_silence_ms,
         )
-        if spec.source.has_audio
+        if narration
         else []
     )
     removals = trim(words, silences, spec.source.duration, tunables)
@@ -389,8 +597,8 @@ def _run_plan_edit(request: StageRequest) -> StageResult:
     )
 
 
-def _apply_edit(spec: EditSpec, artifact: Path) -> EditSpec:
-    decisions = EditDecisions.model_validate_json(artifact.read_text())
+def _apply_edit(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
+    decisions = EditDecisions.model_validate_json((job_dir / artifact).read_text())
     return EditSpec.model_validate(
         {**spec.model_dump(mode="json"), "edit": decisions.model_dump(mode="json")}
     )
@@ -482,7 +690,7 @@ def _verify_transcript_fingerprint(ctx: StageContext) -> dict[str, Any]:
     would be keeping a second copy of a number that already decides this key.
     """
     return {
-        "transcript": ctx.job_keys.get("transcribe"),
+        "transcript": ctx.job_keys.get("transcript"),
         "edit": ctx.spec.edit.model_dump(mode="json"),
         "duration_budget": ctx.profile.duration_budget,
     }
@@ -631,11 +839,37 @@ JOB_STAGES: dict[str, StageSpec] = {
             fingerprint=_transcribe_fingerprint,
             run=_run_transcribe,
             holds_local_weights=True,
+            provides="transcript",
+        ),
+        StageSpec(
+            name="tts",
+            version=1,
+            depends_on=(),
+            fingerprint=_tts_fingerprint,
+            run=_run_tts,
+            suffix=".wav",
+            apply=_apply_narration,
+            prefers_remote=True,
+            # True on this machine, which is the reason above: F5-TTS is ~2 500 MB
+            # on CPU (environment findings §5), so run locally it is one of the
+            # stages §16 serializes. Run it on a worker and the flag costs
+            # nothing, which is most of the point of routing it there.
+            holds_local_weights=True,
+            provides="narration",
+        ),
+        StageSpec(
+            name="align",
+            version=1,
+            depends_on=("narration",),
+            fingerprint=_align_fingerprint,
+            run=_run_align,
+            holds_local_weights=True,
+            provides="transcript",
         ),
         StageSpec(
             name="plan_captions",
             version=1,
-            depends_on=("transcribe",),
+            depends_on=("transcript",),
             fingerprint=_plan_captions_fingerprint,
             run=_run_plan_captions,
             apply=_apply_captions,
@@ -643,14 +877,14 @@ JOB_STAGES: dict[str, StageSpec] = {
         StageSpec(
             name="trim",
             version=1,
-            depends_on=("transcribe",),
+            depends_on=("transcript",),
             fingerprint=_trim_fingerprint,
             run=_run_trim,
         ),
         StageSpec(
             name="plan_edit",
             version=1,
-            depends_on=("transcribe", "trim"),
+            depends_on=("transcript", "trim"),
             fingerprint=_plan_edit_fingerprint,
             run=_run_plan_edit,
             apply=_apply_edit,
@@ -671,18 +905,37 @@ Ordering matters for a duller reason too: they rewrite `spec.json`, and the
 per-profile fingerprints are taken from the spec. Interleaving the two groups
 would have `compile` hash a spec that changed after it looked."""
 
-JOB_ORDER: tuple[str, ...] = ("transcribe", "plan_captions", "trim", "plan_edit")
+JOB_ORDER: tuple[str, ...] = (
+    "tts", "align", "transcribe", "plan_captions", "trim", "plan_edit",
+)
 """`plan_captions` sits ahead of `trim` because §4.5 lets it: captions are planned
 against the full source timeline and `compile` applies the edit, so the two do not
 depend on each other in either direction. The order here is the order they run in,
-and only `plan_edit`'s dependence on `trim` is load-bearing."""
+and only `plan_edit`'s dependence on `trim` is load-bearing.
 
-#: What each job-level stage calls its upstream artifacts.
+`tts` and `align` lead because everything about a synthesized job waits on the
+narration existing, which is §5's flowchart exactly: `plan_focus` is the only
+stage with no audio dependency, and it is per-profile. `align` and `transcribe`
+are alternatives rather than neighbours — both provide `transcript`, and a job
+asks for one of them — so their order relative to each other never comes up."""
+
+#: The two job recipes, which are two ways of getting words with timings (§5.3).
+#: Named here rather than assembled by whoever writes a `job.json`, because the
+#: difference between them is a design fact — a take is narrated by you or by
+#: your voice reading a script, and nothing else about the pipeline changes.
+RECORDED_STAGES: tuple[str, ...] = ("transcribe", "plan_captions", "trim", "plan_edit")
+SYNTHESIZED_STAGES: tuple[str, ...] = ("tts", "align", "plan_captions", "trim", "plan_edit")
+
+#: What each job-level **provision** is called in a dependent's `inputs`.
+#: Keyed by provision rather than by stage: `transcribe` and `align` are two ways
+#: to get one thing, and a dependent that had to know which it got would carry an
+#: `if` about how the narration was made.
 JOB_INPUT_NAMES: dict[str, str] = {
-    "transcribe": "transcript",
-    "plan_captions": "captions",
+    "transcript": "transcript",
+    "narration": "narration",
+    "captions": "captions",
     "trim": "trim",
-    "plan_edit": "edit",
+    "edit": "edit",
 }
 
 
@@ -719,7 +972,7 @@ STAGES: dict[str, StageSpec] = {
             depends_on=("render",),
             fingerprint=_verify_transcript_fingerprint,
             run=_run_verify_transcript,
-            requires=("transcribe",),
+            requires=("transcript",),
             holds_local_weights=True,
         ),
         StageSpec(

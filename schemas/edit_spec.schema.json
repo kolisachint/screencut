@@ -238,6 +238,23 @@
     "Narration": {
       "additionalProperties": false,
       "properties": {
+        "audio_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Synthesized narration, relative to the job directory. Null until `tts` has run.",
+          "title": "Audio Path",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "tts"
+          }
+        },
         "script": {
           "anyOf": [
             {
@@ -292,6 +309,23 @@
           "default": null,
           "description": "Per-job reference audio, relative to the job directory. Required to synthesize.",
           "title": "Voice Reference Path",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
+        "voice_reference_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the reference clip says. F5-TTS conditions on it, and phase 0 passed it explicitly.",
+          "title": "Voice Reference Text",
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"

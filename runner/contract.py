@@ -64,6 +64,12 @@ class StageFailed(RuntimeError):
 
 
 class Runner(Protocol):
-    """`LocalRunner` today; `RemoteRunner` is a drop-in when local stops being enough."""
+    """`LocalRunner` runs a stage here; `RemoteRunner` runs it on a worker.
 
-    def run(self, request: StageRequest) -> StageResult: ...
+    `holds_local_weights` is part of the signature rather than of the request
+    because it is a fact about *this* machine's memory (§16), not about the stage's
+    inputs: the local runner refuses to start a second stage holding weights, and
+    the remote one has nothing to refuse — which is the whole reason phase 8 routes
+    `tts` there."""
+
+    def run(self, request: StageRequest, *, holds_local_weights: bool = False) -> StageResult: ...

@@ -1,19 +1,20 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 7 built — the spec (`spec/`), the Cap adapter and fixture generators
+Status: phases 1 to 8 built — the spec (`spec/`), the Cap adapter and fixture generators
 (`ingest/`), the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the
-model stage `plan_edit` (`plan/`), open transcription (`synth/`), the FFmpeg compiler
-(`compile/`), verification through §9.2 (`verify/`), the runner, cache, agent adapter
-and job record (`runner/`), and the review UI (`review/`). `screencut ingest <take>.cap
---out <job>` turns a recorder bundle into a job; `screencut run <job>` renders it to every
-profile, skips whatever the cache already holds, verifies each render, and — on a job with
-a transcript — diffs the rendered audio against what the edit says should be there.
-`screencut-review` serves the correction loop over the result. Three things the design leans
-on have still not happened, all for want of what is installed on the machine this was
-built on: no *real* recording has been ingested, no model has run (`plan_edit` has only
-ever taken §7.4's degradation path or a scripted stand-in), and §9.2 has never round-tripped
-speech. See [`implementation-phases.md`](implementation-phases.md) for what is built and
-what is next.
+model stage `plan_edit` (`plan/`), open transcription, synthesis and forced alignment
+(`synth/`), the FFmpeg compiler (`compile/`), verification through §9.2 (`verify/`), the
+runner, cache, agent adapter, remote runner and job record (`runner/`), and the review UI
+(`review/`). `screencut ingest <take>.cap --out <job>` turns a recorder bundle into a job;
+`screencut narrate <job>` attaches a script and a voice reference to one; `screencut run
+<job>` renders it to every profile, skips whatever the cache already holds, verifies each
+render, and — on a job with a transcript — diffs the rendered audio against what the edit
+says should be there. `screencut-review` serves the correction loop over the result. Four
+things the design leans on have still not happened, all for want of what is installed on
+the machine this was built on: no *real* recording has been ingested, no model has run
+(`plan_edit` has only ever taken §7.4's degradation path or a scripted stand-in), §9.2 has
+never round-tripped speech, and no voice has been synthesized. See
+[`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is
 
@@ -316,10 +317,16 @@ a re-plan.
 
 Each stage is a pure function `(inputs, params) -> artifact`, exposed as a CLI taking
 JSON on stdin and file paths as arguments. This is the seam that defers decision #2:
-`LocalRunner` shells out to a subprocess; a future `RemoteRunner` ships inputs to a GPU
-worker and retrieves outputs. Pipeline code is identical under both.
+`LocalRunner` shells out to a subprocess; `RemoteRunner` ships inputs to a worker and
+retrieves outputs. Pipeline code is identical under both.
 
-Build only `LocalRunner`.
+`LocalRunner` was the only one built until phase 0 measured F5-TTS at 0.11x realtime on
+the target machine. `RemoteRunner` arrived in phase 8 for that one stage, and what it
+tested for the first time is the property this section has claimed since phase 3: a stage
+sees only its job directory, and a remote run sends only the parts of it that are inputs.
+The transport is an interface with one implementation — a workspace on a filesystem this
+machine can see — because a transport written against a worker nobody has is the same
+mistake as a parser written against output nobody has seen.
 
 The seam is also what makes decision #13 cost nothing: an LLM stage is a subprocess that
 happens to be a coding agent, sitting alongside the subprocesses that happen to be FFmpeg
@@ -350,10 +357,20 @@ looks like the prompt edit had no effect.
 
 Conflating them is a real bug waiting to happen.
 
-**`align`** runs WhisperX in **forced alignment** mode against the known script text. F5-TTS
-does not return reliable word timestamps, so alignment is required even when the script
-was supplied. Because the text is ground truth, this is substantially more accurate than
-open transcription.
+**`align`** runs **forced alignment** against the known script text. F5-TTS does not return
+reliable word timestamps, so alignment is required even when the script was supplied.
+Because the text is ground truth, this is substantially more accurate than open
+transcription.
+
+Phase 8 built it, and not with WhisperX. WhisperX was never run on the target machine —
+phase 0 benchmarked three other backends — and a parser for output nobody has seen is the
+failure phase 0 exists to prevent. So `align` open-transcribes the narration with
+whisper.cpp and anchors the script to what came back, interpolating the runs between
+anchors: the two sequences are nearly identical by construction, which makes this
+arithmetic over an edit distance rather than an acoustic model (principle 3). WhisperX
+remains the upgrade behind the same stage contract. **The script wins the word and the
+audio wins the timing** — keep whisper's words instead and §9.2 below is comparing the
+render against a transcript of itself.
 
 **`verify`** runs **open transcription** on the *final rendered audio* and diffs against the
 script. Same library, opposite purpose: one produces timings, the other independently
@@ -569,6 +586,7 @@ records the degradation in the job record so review shows it. Verification still
 |---|---|
 | `plan_edit` | `trim`'s proposed `removals`, every segment `essential` |
 | `script_draft` | Job halts — there is no script to fall back to |
+| `tts` | Job halts — same reason, one step later: there is no narration to fall back to, and a silent render looks finished |
 | Emphasis | No emphasis markers |
 | `plan_overlays` | No overlays |
 | Metadata sidecar | Script-derived title and description |

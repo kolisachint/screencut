@@ -352,11 +352,24 @@ export interface Narration {
    */
   voice_reference_path: string | null;
   /**
+   * What the reference clip says. F5-TTS conditions on it, and phase 0 passed it
+   * explicitly.
+   *
+   * @producedBy config (deterministic)
+   */
+  voice_reference_text: string | null;
+  /**
    * Recorded on the job so the boundary of decision #20 is auditable, not assumed.
    *
    * @producedBy human (deterministic)
    */
   voice_consent_note: string | null;
+  /**
+   * Synthesized narration, relative to the job directory. Null until `tts` has run.
+   *
+   * @producedBy tts (deterministic)
+   */
+  audio_path: string | null;
 }
 
 export type NarrationSource = "recorded" | "synthesized";

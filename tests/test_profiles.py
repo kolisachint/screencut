@@ -95,12 +95,30 @@ def test_synthesis_is_bounded_by_the_schema_not_by_intent():
         Narration(source=NarrationSource.SYNTHESIZED, script="hello")
     with pytest.raises(ValidationError, match="requires a script"):
         Narration(source=NarrationSource.SYNTHESIZED, voice_reference_path="source/voice.wav")
+    # What the reference *says* is an input to F5-TTS, not a nicety: phase 0 ran it
+    # with the text supplied, and leaving it blank falls back to a path nobody here
+    # has run (environment findings §4).
+    with pytest.raises(ValidationError, match="reference's own text"):
+        Narration(
+            source=NarrationSource.SYNTHESIZED,
+            script="hello",
+            voice_reference_path="source/voice.wav",
+        )
     assert Narration(
         source=NarrationSource.SYNTHESIZED,
         script="hello",
         voice_reference_path="source/voice.wav",
+        voice_reference_text="this is my voice",
         voice_consent_note="recorded by me on 2026-01-01",
     )
+
+
+def test_only_synthesized_narration_carries_its_own_audio():
+    """A wav on a recorded job would be an audio spine the compiler silently
+    prefers over the take's own track — a wrong render rather than a bad document,
+    which is the kind of thing the schema is here to make impossible."""
+    with pytest.raises(ValidationError, match="only synthesized narration"):
+        Narration(audio_path="stages/abc.wav")
 
 
 def test_recorded_narration_is_the_default_and_needs_nothing():
