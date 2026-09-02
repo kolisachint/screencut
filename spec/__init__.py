@@ -7,6 +7,15 @@ separate document that projects it into an actual render.
 
 from spec.audio import AudioTrack
 from spec.captions import CaptionBlock, Word
+from spec.corrections import (
+    CorrectionDiff,
+    Corrections,
+    ReinstatedRemoval,
+    RetieredSegment,
+    SpecChange,
+    StaleCorrection,
+    diff_specs,
+)
 from spec.edit import (
     EditDecisions,
     Removal,
@@ -44,6 +53,8 @@ __all__ = [
     "CURRENT_SPEC_VERSION",
     "CaptionBlock",
     "CaptionStyle",
+    "CorrectionDiff",
+    "Corrections",
     "DEMO_16X9",
     "EditDecisions",
     "EditSpec",
@@ -63,18 +74,23 @@ __all__ = [
     "OverlayTemplate",
     "Point",
     "Rect",
+    "ReinstatedRemoval",
     "Removal",
     "RemovalKind",
     "RenderProfile",
     "SHORTS_9X16",
     "SafeArea",
+    "RetieredSegment",
     "Seconds",
     "Segment",
     "Source",
+    "SpecChange",
+    "StaleCorrection",
     "Stage",
     "Tier",
     "Word",
     "choose_threshold",
+    "diff_specs",
     "field_origins",
     "load_spec",
     "load_spec_file",

@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
+from spec.corrections import CorrectionDiff, Corrections
 from spec.edit import EditDecisions
 from spec.editspec import EditSpec
 from spec.overlays import OverlayPlan
@@ -27,12 +28,17 @@ SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
 #: Documents and fragments worth emitting. The fragments are what LLM stages are
 #: asked to return (§7.2) — small and heavily typed, so most wrong answers are
-#: invalid answers rather than plausible ones (risk R5).
+#: invalid answers rather than plausible ones (risk R5). The last two are what
+#: review posts and what review records (§8): the same generator serves them, so
+#: the page that edits the spec and the pipeline that reads it cannot disagree
+#: about the shape of a correction.
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "edit_spec": EditSpec,
     "render_profile": RenderProfile,
     "edit_decisions": EditDecisions,
     "overlay_plan": OverlayPlan,
+    "corrections": Corrections,
+    "correction_diff": CorrectionDiff,
 }
 
 

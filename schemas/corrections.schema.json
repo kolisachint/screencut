@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "ReinstatedRemoval": {
+      "additionalProperties": false,
+      "description": "A removal the reviewer put back \u2014 addressed by the span it cut.",
+      "properties": {
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        },
+        "t_out": {
+          "minimum": 0.0,
+          "title": "T Out",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "t_out"
+      ],
+      "title": "ReinstatedRemoval",
+      "type": "object"
+    },
+    "RetieredSegment": {
+      "additionalProperties": false,
+      "description": "A segment the reviewer re-ranked \u2014 addressed by where it starts.\n\nIts start, not its whole span: a tier is an argument about a passage, and the\npassage is identified by where it begins (\u00a74.4).",
+      "properties": {
+        "t_in": {
+          "minimum": 0.0,
+          "title": "T In",
+          "type": "number",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        }
+      },
+      "required": [
+        "t_in",
+        "tier"
+      ],
+      "title": "RetieredSegment",
+      "type": "object"
+    },
+    "Tier": {
+      "description": "How good a segment is \u2014 aspect-independent taste, decided once (\u00a74.4.1).\n\nWhich tiers survive is a *separate*, per-profile, arithmetic decision driven\nby `duration_budget`. Tiers are a ranking, not a cut.",
+      "enum": [
+        "essential",
+        "supporting",
+        "optional"
+      ],
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "$id": "https://screencut.local/schemas/corrections.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a person changed about one job. Sparse: absent means untouched.",
+  "properties": {
+    "budgets": {
+      "additionalProperties": {
+        "exclusiveMinimum": 0.0,
+        "type": "number"
+      },
+      "description": "Per-profile `duration_budget` overrides. 'Make the short shorter' is one field rather than a dozen re-tierings, and it is \u00a710's budget signal.",
+      "title": "Budgets",
+      "type": "object",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "human"
+      }
+    },
+    "reinstated": {
+      "description": "Removals to put back. The span returns as a segment; nothing else moves.",
+      "items": {
+        "$ref": "#/$defs/ReinstatedRemoval"
+      },
+      "title": "Reinstated",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "human"
+      }
+    },
+    "retiered": {
+      "description": "Segments to re-rank (\u00a74.4.1). Which tiers then survive stays arithmetic.",
+      "items": {
+        "$ref": "#/$defs/RetieredSegment"
+      },
+      "title": "Retiered",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "human"
+      }
+    }
+  },
+  "title": "Corrections",
+  "type": "object"
+}

@@ -1,8 +1,10 @@
 """Running a job: what is stale, what is cached, what gets published.
 
-This is the part §8 leans on. A correction in review rewrites the spec and re-runs
-the pipeline; if the cache holds, only the stages the correction actually touched
-do any work. Cache correctness is a review-UI requirement, not an optimization.
+This is the part §8 leans on. A correction in review layers over the spec and
+re-runs the pipeline; if the cache holds, only the stages the correction actually
+touched do any work. Cache correctness is a review-UI requirement, not an
+optimization — and the same cache is why the correction has to be a layer rather
+than an edit (§8.1): a cached planner would write its answer back over it.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from prefs import Constraints, load_constraints, resolve_profile
+from spec.corrections import PROPOSED_NAME, Corrections
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
 from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
@@ -52,6 +55,9 @@ class StageOutcome:
 class JobRun:
     job_id: str
     outcomes: list[StageOutcome] = field(default_factory=list)
+    profiles: list[RenderProfile] = field(default_factory=list)
+    """The profiles as rendered, corrections applied. Review reads the budget it
+    actually got back off this rather than re-deriving it (§8)."""
     renders: dict[str, Path] = field(default_factory=dict)
     reports: dict[str, VerificationReport] = field(default_factory=dict)
     degradations: list[str] = field(default_factory=list)
@@ -81,6 +87,13 @@ def run_job(
     force: bool = False,
 ) -> JobRun:
     job_dir = Path(job_dir)
+    # Read before anything runs, applied after everything job-level has: a
+    # correction is a layer over the planners' spec, not an edit of it
+    # (spec/corrections.py). The planners are cached, so a spec they rewrite from
+    # cache would otherwise overwrite the correction on the very next run.
+    corrections = Corrections.load(job_dir)
+    _restore_proposal(job_dir, corrections)
+
     spec = load_spec_file(job_dir / "spec.json")
     runner = runner or LocalRunner()
     db_path = Path(db_path) if db_path else db.DEFAULT_DB_PATH
@@ -96,20 +109,24 @@ def run_job(
             spec_version=spec.spec_version,
             status="running",
         )
+        # A name goes through `constraints.yaml`; a profile object arrives already
+        # resolved. Either way the correction layer goes on last, so "make the short
+        # shorter" reaches a `screencut run` from the shell and not only the page it
+        # was typed on.
+        resolved = tuple(
+            corrections.apply_to_profile(
+                name if isinstance(name, RenderProfile) else resolve_profile(name)
+            )
+            for name in names
+        )
         # The job-level stages first and in full, because they rewrite `spec.json`
         # and every per-profile fingerprint is taken from the spec. Interleaving
         # them would have `compile` hash a document that changed after it looked.
-        resolved = tuple(
-            name if isinstance(name, RenderProfile) else resolve_profile(name) for name in names
-        )
         spec, job_paths, job_keys = _run_job_stages(
-            run, connection, spec, resolved, job_dir, runner, force, constraints
+            run, connection, spec, resolved, job_dir, runner, force, constraints, corrections
         )
-        for name in names:
-            # A name goes through `constraints.yaml`; a profile object arrives already
-            # resolved. The review UI will pass the second kind, since "make the short
-            # shorter" is one edited field on a profile rather than a new named one.
-            profile = name if isinstance(name, RenderProfile) else resolve_profile(name)
+        run.profiles = list(resolved)
+        for profile in resolved:
             _run_profile(
                 run, connection, spec, profile, job_dir, runner, encoder, force,
                 constraints, job_paths, job_keys,
@@ -134,17 +151,18 @@ def _run_job_stages(
     runner: LocalRunner,
     force: bool,
     constraints: Constraints,
+    corrections: Corrections,
 ) -> tuple[EditSpec, dict[str, str], dict[str, str]]:
     """Run what `job.json` asks for, once, and fold the results into the spec.
 
     Returns the spec the per-profile stages will render, plus their artifact paths
     and cache keys, which `verify` needs. A job directory with no `job.json` —
-    every fixture in this repository — asks for nothing and gets its spec back
-    untouched, which is why adding this group broke no existing job.
+    every fixture in this repository — asks for nothing and still passes through
+    the correction layer, because a fixture is as reviewable as a take.
     """
     wanted = set(JobConfig.load(job_dir).stages)
     if not wanted:
-        return spec, {}, {}
+        return _write_spec(job_dir, spec, corrections, applied=False), {}, {}
 
     context = JobContext(
         spec=spec, profiles=profiles, job_dir=job_dir, constraints=constraints
@@ -221,12 +239,44 @@ def _run_job_stages(
             spec = stage.apply(spec, job_dir / artifact)
             applied = True
 
-    if applied:
-        # Written back because principle 1 is that the spec is the system: review,
-        # verification and golden replay all read `spec.json`, and a caption list
-        # that lived only in `stages/` would be invisible to every one of them.
-        (job_dir / "spec.json").write_text(spec.model_dump_json(indent=2) + "\n")
-    return spec, paths, keys
+    return _write_spec(job_dir, spec, corrections, applied), paths, keys
+
+
+def _write_spec(
+    job_dir: Path, proposed: EditSpec, corrections: Corrections, applied: bool
+) -> EditSpec:
+    """Put the correction layer on the planners' spec, and write both documents.
+
+    `spec.json` is what everything downstream reads — principle 1, and the reason
+    a caption list that lived only in `stages/` would be invisible to compile,
+    verification and golden replay alike. `proposed.json` is the same document
+    without the human layer, and it exists only while a correction does: it is the
+    left-hand side of the diff §10 learns from, and deriving it afterwards from
+    cached artifacts would be an archaeology exercise that a `--force` run breaks.
+    """
+    if corrections.empty:
+        if applied:
+            (job_dir / "spec.json").write_text(proposed.model_dump_json(indent=2) + "\n")
+        return proposed
+
+    corrected = corrections.apply_to(proposed)
+    (job_dir / PROPOSED_NAME).write_text(proposed.model_dump_json(indent=2) + "\n")
+    (job_dir / "spec.json").write_text(corrected.model_dump_json(indent=2) + "\n")
+    return corrected
+
+
+def _restore_proposal(job_dir: Path, corrections: Corrections) -> None:
+    """With the corrections gone, the proposal is the spec again.
+
+    Withdrawing a correction has to be as complete as making one. A job whose
+    stages all rewrite the spec would recover on its own the next time they ran,
+    but a fixture's would not, and "delete corrections.json" quietly meaning
+    "keep them forever" is the same silence this whole layer exists to avoid.
+    """
+    previous = job_dir / PROPOSED_NAME
+    if corrections.empty and previous.is_file():
+        (job_dir / "spec.json").write_text(previous.read_text())
+        previous.unlink()
 
 
 def _run_profile(

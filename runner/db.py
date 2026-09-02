@@ -6,10 +6,13 @@ the learner and the review UI want queries — "median `zoom_factor` over the la
 accepted jobs in `shorts_9x16`" is a query, and retrofitting a database once the
 golden set matters is worse than starting with one.
 
-Four tables, none of them large. Two of them (`accepted_specs`, `pref_changes`)
-have no writer until phases 7 and 10; they are created now because a migration
-that adds a table to a database with history is ordinary, and one that adds it
-under pressure while the learner is being debugged is not.
+Six tables, none of them large. `pref_changes` still has no writer — it waits for
+the learner (§10) — and was created with the first migration for the same reason
+`accepted_specs` was: a migration that adds a table to a database with history is
+ordinary, and one that adds it under pressure while the learner is being debugged
+is not. `reviews` is phase 7's own, because what a reviewer changed is a different
+record from what they accepted: a rejection changes no spec and still says
+something, and §10.1 has to be able to ask both questions.
 """
 
 from __future__ import annotations
@@ -80,6 +83,19 @@ MIGRATIONS: list[tuple[str, str]] = [
             created_at    TEXT NOT NULL
         );
         CREATE INDEX verifications_by_job ON verifications (job_id, profile);
+        """,
+    ),
+    (
+        "0003_reviews",
+        """
+        CREATE TABLE reviews (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id     TEXT NOT NULL,
+            decision   TEXT NOT NULL,
+            diff_json  TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX reviews_by_job ON reviews (job_id, id);
         """,
     ),
 ]
@@ -219,6 +235,20 @@ def latest_verification(connection: sqlite3.Connection, job_id: str, profile: st
     ).fetchone()
 
 
+def rendered_profiles(connection: sqlite3.Connection, job_id: str) -> list[str]:
+    """Profiles this job has actually been rendered and verified for.
+
+    Which profiles a job has is not in the job record, because §4.1 puts them
+    outside the spec: one `EditSpec` x N `RenderProfile`, chosen per run. What was
+    rendered is therefore a fact about the runs, and the report per render is
+    where it is written down.
+    """
+    rows = connection.execute(
+        "SELECT DISTINCT profile FROM verifications WHERE job_id = ? ORDER BY profile", (job_id,)
+    ).fetchall()
+    return [row["profile"] for row in rows]
+
+
 def verified_jobs(connection: sqlite3.Connection, profile: str) -> list[str]:
     """Jobs whose latest report for this profile passed — the learner's corpus (§10.1)."""
     rows = connection.execute(
@@ -248,6 +278,38 @@ def record_accepted_spec(
         "INSERT INTO accepted_specs (job_id, profile, spec_json, accepted_at) VALUES (?, ?, ?, ?)",
         (job_id, profile, spec_json, now()),
     )
+
+
+def record_review(
+    connection: sqlite3.Connection, *, job_id: str, decision: str, diff_json: str
+) -> int:
+    """One review decision, with the proposed -> corrected diff that produced it (§8).
+
+    The diff rather than the corrected spec, because §10 learns from *differences*:
+    "this reviewer reinstates silences shorter than a second" is a statement about a
+    diff, and recovering it by comparing two whole specs later means keeping both
+    forever. The accepted spec is stored separately, per profile, by
+    `record_accepted_spec` — the two answer different questions and a rejection
+    answers only this one.
+    """
+    cursor = connection.execute(
+        "INSERT INTO reviews (job_id, decision, diff_json, created_at) VALUES (?, ?, ?, ?)",
+        (job_id, decision, diff_json, now()),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+def latest_review(connection: sqlite3.Connection, job_id: str) -> sqlite3.Row | None:
+    return connection.execute(
+        "SELECT * FROM reviews WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,)
+    ).fetchone()
+
+
+def list_jobs(connection: sqlite3.Connection, limit: int = 100) -> list[sqlite3.Row]:
+    """Every job the pipeline has run, newest first — the review index (§8)."""
+    return connection.execute(
+        "SELECT * FROM jobs ORDER BY updated_at DESC, job_id LIMIT ?", (limit,)
+    ).fetchall()
 
 
 def record_pref_change(

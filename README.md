@@ -17,7 +17,7 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 6 are built.** The data model everything else is written against;
+**Phases 1 to 7 are built.** The data model everything else is written against;
 the compiler that turns it into video — `plan_focus`, the time projection, ASS
 captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios at
 two different lengths; the runner that makes re-running cheap; and verification
@@ -37,6 +37,16 @@ transcript, which a successful edit is *supposed* to differ from, but against th
 source transcript minus the removals and minus the tiers this profile did not
 select. Differences on a cut are the edit working; differences anywhere else are
 desync, a wrong take, truncated narration, or a cut that landed inside a word.
+
+**Phase 7 closes the loop back to you.** `screencut-review` serves one page per job:
+the render for each profile, the verification report, the cuts grouped by why they were
+made, the segments with their tier and the reason for it, and each profile's duration
+budget as a number you can type over. Correcting any of them re-runs `compile` and
+`render` and **no planner at all** — the page says which stages ran, so the claim is
+watchable rather than asserted. A correction is a layer beside the spec rather than an
+edit of it, because the planners are cached and would otherwise write their answer back
+over yours. Accepting records the spec per profile and the proposed→corrected diff, which
+is what the phase-10 learner reads.
 
 **Three things have not happened yet, and all are about what is installed rather
 than what is written.** No *real* recording has been ingested — that needs a
@@ -61,9 +71,9 @@ numbers under `docs/measurements/` and the harness in `tools/`:
 - **The agent CLI round-trips a schema** — 12/12 valid, though 11/12 arrive
   wrapped in a code fence, and latency runs 6–66 s per call.
 
-Next is a real take and a real model call — record one, run it, look at the cuts,
-and retune — which is phase 5's stop-and-reassess gate. Then phase 6's remaining
-layers and phase 7's review UI.
+Next is a real take and a real model call — record one, run it, look at the cuts in
+review, and retune — which is phase 5's stop-and-reassess gate, and now the loop for
+doing it exists.
 
 ## Quickstart
 
@@ -73,8 +83,14 @@ make run         # a synthetic job through the whole pipeline (needs ffmpeg)
 make take        # a Cap-format take: generate it, ingest it, render it
                  # (needs whisper-cli and its weights; the others do not)
 make broken      # the deliberately bad fixture, so the checks are seen firing
+make review      # the review UI on http://127.0.0.1:8000 (§8)
 make check       # tests, generated-artifact drift, TypeScript typecheck
 ```
+
+`make review` needs `pip install -e ".[review]"` — the server is optional, so a headless
+machine installs the pipeline without one. Pass the encoder the jobs were rendered with
+(`make review ENCODER=videotoolbox`), or the first correction re-encodes from scratch
+rather than re-encoding what changed.
 
 On the target machine, `make run ENCODER=videotoolbox` uses the hardware encoder.
 The default is `software`, which is slower and byte-reproducible — what §11 hashes.
@@ -107,11 +123,12 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 | `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
 | `runner/` | The stage contract, `LocalRunner`, the content-addressed cache, SQLite |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
+| `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
 | `golden/` | The deliberately bad fixture, and the findings it must produce |
-| `schemas/` | Generated — four JSON Schemas and the TypeScript types. Regenerate with `make generated` |
+| `schemas/` | Generated — six JSON Schemas and the TypeScript types. Regenerate with `make generated` |
 | `tests/` | The invariants, the round-trip, the migration, the graph, and real renders |
 
-Four things in the spec are load-bearing and easy to miss:
+Five things in the spec are load-bearing and easy to miss:
 
 - **Everything is in source coordinates.** Space is normalized `0.0–1.0`, time is
   seconds from source start, and there is no second time base. Cuts are projected
@@ -126,6 +143,10 @@ Four things in the spec are load-bearing and easy to miss:
   deterministic or model-backed. Golden replay (§11.1) checks the two halves
   differently, and backfilling that metadata later means backfilling it across a
   schema that has already drifted.
+- **A human correction is a sparse layer over the spec, not an edit of it** (§8.1).
+  The planners are cached on what they read, so a cached `plan_edit` would write its
+  answer back over a re-tiering. The layer goes on last, and the proposal it differs
+  from is kept so the difference can be learned from.
 
 ## Requirements
 
