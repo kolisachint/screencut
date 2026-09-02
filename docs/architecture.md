@@ -1,13 +1,14 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 6 built — the spec (`spec/`), the Cap adapter and fixture generators
+Status: phases 1 to 7 built — the spec (`spec/`), the Cap adapter and fixture generators
 (`ingest/`), the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the
 model stage `plan_edit` (`plan/`), open transcription (`synth/`), the FFmpeg compiler
-(`compile/`), verification through §9.2 (`verify/`), and the runner, cache, agent adapter
-and job record (`runner/`). `screencut ingest <take>.cap --out <job>` turns a recorder
-bundle into a job; `screencut run <job>` renders it to every profile, skips whatever the
-cache already holds, verifies each render, and — on a job with a transcript — diffs the
-rendered audio against what the edit says should be there. Three things the design leans
+(`compile/`), verification through §9.2 (`verify/`), the runner, cache, agent adapter
+and job record (`runner/`), and the review UI (`review/`). `screencut ingest <take>.cap
+--out <job>` turns a recorder bundle into a job; `screencut run <job>` renders it to every
+profile, skips whatever the cache already holds, verifies each render, and — on a job with
+a transcript — diffs the rendered audio against what the edit says should be there.
+`screencut-review` serves the correction loop over the result. Three things the design leans
 on have still not happened, all for want of what is installed on the machine this was
 built on: no *real* recording has been ingested, no model has run (`plan_edit` has only
 ever taken §7.4's degradation path or a scripted stand-in), and §9.2 has never round-tripped
@@ -615,6 +616,36 @@ invalidated stages, and re-renders. **This design puts the entire burden on the 
 cache** — if a caption-position tweak re-synthesizes narration, the loop is unusable and
 the corrections that feed §10 stop happening. Cache correctness is a review-UI
 requirement, not an optimization.
+
+### 8.1 A correction is a layer, not an edit of the spec
+
+The obvious implementation — write the corrected fields into `spec.json` — is wrong, and
+wrong silently. The planners rewrite exactly the fields review edits, and §5.2 caches them
+by what they *read*: `plan_edit`'s fingerprint is the focus track and the source duration,
+so re-tiering a segment does not invalidate it, and the next run applies the cached
+fragment straight back over the correction. The reviewer's decision would survive until
+the next render and then vanish with nothing said.
+
+So corrections live in `corrections.json` beside the spec, and the pipeline applies them
+**after** the job-level stages have folded their artifacts in. The same discipline as
+`constraints.yaml` over the built-in profiles (§4.1) and `EditDecisions` over the timeline
+(§4.5): state the difference, apply it last, keep the thing it differs from intact.
+
+Three things follow, and all three are load-bearing:
+
+- **The proposal survives.** While a correction exists, `spec.json` is what rendered and
+  `proposed.json` is what the planners said. §10 learns from the difference between two
+  documents, so a correction that changes nothing produces no change to learn from.
+- **Corrections address content, not indices.** A removal by its span, a segment by where
+  it starts. An index into a list the model rewrote means something else afterwards, and
+  silently means it.
+- **A correction the plan no longer contains is refused, not skipped.** Dropping one
+  quietly is the same failure as overwriting it. When the plan really has moved
+  underneath a correction, the reviewer is told rather than shown a video that ignores
+  them.
+
+Withdrawing a correction restores the proposal, so taking one back is as complete as
+making one.
 
 A later phase adds static-frame overlay preview: scrub to a frame, see captions and
 overlays composited on canvas, drag to reposition, re-render only for motion and audio.

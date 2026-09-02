@@ -15,15 +15,26 @@ dependencies = [
 
 [project.scripts]
 screencut = "runner.cli:main"
+screencut-review = "review.app:main"
 
 [project.optional-dependencies]
+# The review UI is the one part of this system with a web server in it, and it is
+# not needed to render a job. Kept optional so a headless machine installs the
+# pipeline without one (decision #2).
+review = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
 dev = [
     "pytest>=8.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.27",
 ]
 
 [tool.hatch.build.targets.wheel]
 # The repository layout of docs/architecture.md §12 is the package layout.
-packages = ["spec", "ingest", "plan", "synth", "prefs", "compile", "runner", "verify"]
+packages = ["spec", "ingest", "plan", "synth", "prefs", "compile", "runner", "verify", "review"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

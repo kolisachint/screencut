@@ -95,6 +95,44 @@ export interface CaptionStyle {
 }
 
 /**
+ * The proposed -> corrected diff, which is the phase-10 signal (§10). Derived by
+ * comparing the two documents rather than by reading the corrections that produced
+ * them, so a correction that changed nothing does not appear as a change — and so the
+ * record cannot claim an edit the render did not get.
+ */
+export interface CorrectionDiff {
+  /**
+   * @producedBy human (deterministic)
+   */
+  changes: SpecChange[];
+}
+
+/**
+ * What a person changed about one job. Sparse: absent means untouched.
+ */
+export interface Corrections {
+  /**
+   * Removals to put back. The span returns as a segment; nothing else moves.
+   *
+   * @producedBy human (deterministic)
+   */
+  reinstated: ReinstatedRemoval[];
+  /**
+   * Segments to re-rank (§4.4.1). Which tiers then survive stays arithmetic.
+   *
+   * @producedBy human (deterministic)
+   */
+  retiered: RetieredSegment[];
+  /**
+   * Per-profile `duration_budget` overrides. 'Make the short shorter' is one field
+   * rather than a dozen re-tierings, and it is §10's budget signal.
+   *
+   * @producedBy human (deterministic)
+   */
+  budgets: Record<string, number>;
+}
+
+/**
  * `removals` + `segments`, partitioning the source exactly. Validated here: in
  * ascending order, non-inverted, non-overlapping, contiguous, and starting at 0.0. The
  * one thing that cannot be checked here is where the partition *ends* — that needs the
@@ -394,6 +432,20 @@ export interface Rect {
 }
 
 /**
+ * A removal the reviewer put back — addressed by the span it cut.
+ */
+export interface ReinstatedRemoval {
+  /**
+   * @producedBy human (deterministic)
+   */
+  t_in: number;
+  /**
+   * @producedBy human (deterministic)
+   */
+  t_out: number;
+}
+
+/**
  * A range that never survives, in any profile. Expressed as a range rather than as
  * rewritten text, and that is what keeps this an edit: audio and caption are cut at
  * the same instants, from the same decision, and nothing is put into your mouth that
@@ -469,6 +521,22 @@ export interface RenderProfile {
    * @producedBy config (deterministic)
    */
   encode: EncodeSettings;
+}
+
+/**
+ * A segment the reviewer re-ranked — addressed by where it starts. Its start, not its
+ * whole span: a tier is an argument about a passage, and the passage is identified by
+ * where it begins (§4.4).
+ */
+export interface RetieredSegment {
+  /**
+   * @producedBy human (deterministic)
+   */
+  t_in: number;
+  /**
+   * @producedBy human (deterministic)
+   */
+  tier: Tier;
 }
 
 /**
@@ -570,6 +638,28 @@ export interface Source {
 }
 
 /**
+ * One proposed -> corrected difference, addressed the way a person reads it.
+ */
+export interface SpecChange {
+  /**
+   * Dotted path with the span or start time that identifies the element.
+   *
+   * @producedBy human (deterministic)
+   */
+  path: string;
+  /**
+   * @producedBy human (deterministic)
+   */
+  before: number | string | null;
+  /**
+   * `null` where the correction removed the element.
+   *
+   * @producedBy human (deterministic)
+   */
+  after: number | string | null;
+}
+
+/**
  * How good a segment is — aspect-independent taste, decided once (§4.4.1). Which tiers
  * survive is a *separate*, per-profile, arithmetic decision driven by
  * `duration_budget`. Tiers are a ranking, not a cut.
@@ -607,4 +697,4 @@ export interface Word {
 }
 
 /** Documents and fragments that are emitted as standalone schemas. */
-export type SpecDocument = EditDecisions | EditSpec | OverlayPlan | RenderProfile;
+export type SpecDocument = CorrectionDiff | Corrections | EditDecisions | EditSpec | OverlayPlan | RenderProfile;

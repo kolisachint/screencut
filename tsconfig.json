@@ -1,12 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["schemas/screencut.ts", "schemas/typecheck.ts"]
+  "include": ["schemas/screencut.ts", "schemas/typecheck.ts", "review/static/review.js"]
 }

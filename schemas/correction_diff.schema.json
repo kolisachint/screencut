@@ -1,0 +1,83 @@
+{
+  "$defs": {
+    "SpecChange": {
+      "additionalProperties": false,
+      "description": "One proposed -> corrected difference, addressed the way a person reads it.",
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`null` where the correction removed the element.",
+          "title": "After",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        },
+        "path": {
+          "description": "Dotted path with the span or start time that identifies the element.",
+          "minLength": 1,
+          "title": "Path",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "before",
+        "after"
+      ],
+      "title": "SpecChange",
+      "type": "object"
+    }
+  },
+  "$id": "https://screencut.local/schemas/correction_diff.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The proposed -> corrected diff, which is the phase-10 signal (\u00a710).\n\nDerived by comparing the two documents rather than by reading the corrections\nthat produced them, so a correction that changed nothing does not appear as a\nchange \u2014 and so the record cannot claim an edit the render did not get.",
+  "properties": {
+    "changes": {
+      "items": {
+        "$ref": "#/$defs/SpecChange"
+      },
+      "title": "Changes",
+      "type": "array",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "human"
+      }
+    }
+  },
+  "title": "CorrectionDiff",
+  "type": "object"
+}

@@ -634,7 +634,7 @@ computed, because the key is needed before the render exists.
 
 ---
 
-## Phase 7 — Review UI
+## Phase 7 — Review UI — **built**
 
 **Goal:** capture corrections as structural diffs.
 
@@ -655,14 +655,87 @@ computed, because the key is needed before the render exists.
 **Exit criteria**
 
 - A correction round trip — edit, re-render, accept — completes in seconds, not minutes,
-  because the cache holds.
+  because the cache holds. — **met, with the render as the floor.** Everything upstream of
+  `compile` is a cache hit, so the cost of a correction is one compile and one encode; on
+  the fixture that is seconds, and on a long take it is whatever encoding that take costs.
 - Adjusting a removal, a tier, or a budget re-runs compile and render and **re-runs no
   planner at all** — not `plan_edit`, not `plan_captions`, not `plan_overlays`. This is
   §4.5's whole payoff, and if it does not hold, the review loop costs a model call per
-  correction and will be abandoned.
-- `accepted_specs` and the diff record populate correctly.
+  correction and will be abandoned. — **met**, and asserted three times over in
+  `tests/test_review.py`: each correction re-runs exactly `compile`, `render`,
+  `verify_transcript` and `verify`, the scripted agent is called once for the life of the
+  job, and `plan_focus` does not re-run either.
+- `accepted_specs` and the diff record populate correctly. — **met.** Accepting writes one
+  `accepted_specs` row per profile and one `reviews` row carrying the proposed→corrected
+  diff; rejecting writes the second without the first.
 
 **Not in this phase:** overlay preview, live playback.
+
+**How it came out.** The build was small and the design problem underneath it was not.
+Everything here follows from one thing the plan did not say out loud: **the planners
+rewrite the fields review edits, and the cache is what makes that dangerous.**
+
+**A correction cannot be an edit of `spec.json`.** `plan_edit`'s fingerprint reads the
+focus track and the source duration, so re-tiering a segment does not invalidate it — and
+the next run applies the *cached* fragment straight back over the correction. The
+reviewer's decision would survive exactly until the next render, and disappear silently.
+So a correction is a sparse layer beside the spec, `corrections.json`, applied after the
+job-level stages have folded their artifacts in. It is the same shape as `constraints.yaml`
+over the built-in profiles (§4.1) and `EditDecisions` over the timeline (§4.5): state the
+difference, apply it last, keep the thing it differs from intact.
+
+**Keeping the proposal intact is what makes the diff possible.** With a correction on the
+job, the pipeline writes both documents — `spec.json` as rendered, `proposed.json` as the
+planners left it — and the §10 record is the difference between two documents rather than a
+restatement of the form that produced them. So a correction that changes nothing produces
+no change: setting a tier to the one it already had, or typing the budget the profile
+already has, is not a row in the learner's corpus. Recovering the proposal afterwards from
+cached artifacts would have been an archaeology exercise that a `--force` run breaks.
+
+**Withdrawing a correction had to be as complete as making one.** Deleting
+`corrections.json` restores `spec.json` from `proposed.json` and removes it. A job whose
+stages all rewrite the spec would have recovered on its own next run; a fixture's would
+not, and "delete the file" quietly meaning "keep them forever" is the same silence the
+layer exists to prevent.
+
+**A stale correction is refused, not skipped.** A correction addresses content — a removal
+by its span, a segment by where it starts — never an index, because an index into a list
+the model rewrote means something else afterwards and silently means it. When the plan
+really has moved underneath a correction, applying it raises rather than dropping it: the
+API answers 409 and says so. Dropping it quietly is the same class of failure as
+overwriting it, and both end with a reviewer watching a video that ignores them.
+
+**Reinstating a removal is arithmetic, and it had two answers that both looked right.** The
+span comes back as its own segment rather than as an extension of a neighbour, because
+merging would fold two arguments about two passages into one. Its tier is the higher of
+whatever it touches, and `essential` when it touches nothing — never the lowest, because a
+reviewer who puts a passage back and then watches a tight budget drop it again has been
+told the correction worked when it did not.
+
+**The correction layer belongs to the job, not to the page.** `run_job` reads it, so
+`screencut run` from the shell renders exactly what review shows. A budget override that
+lived only in the web process would be a second pipeline, and the exit criterion above
+would have been proved about the wrong one.
+
+**Typed against the generated types with no build step.** The page is plain ES modules;
+`tsc` checks it with `checkJs` against `schemas/screencut.ts`, so a spec change the page
+has not caught up with fails `make typecheck` rather than rendering an empty column, and
+the browser runs exactly what is committed. `Corrections` and the diff are Pydantic models
+in `spec/`, which puts them in the same generated file — the page that posts a correction
+and the pipeline that reads it cannot disagree about its shape. Two shapes on the page are
+not generated: the verification report, which is a pipeline record rather than a spec
+document, and the response envelope.
+
+**The page says which stages ran.** That is this phase's exit criterion, and a reviewer
+should be able to watch it hold rather than infer it from a stopwatch — the same argument
+as §9.1's report being numbers rather than a verdict.
+
+**What this phase does not have is a corrected take.** The loop is exercised against the
+Cap-format fixture and the scripted agent, so what is proved is that a correction costs one
+compile and one encode. Which corrections get made most often — the thing §8 says should
+decide what the overlay preview optimizes for, and the thing §10 needs ten to fifteen jobs
+of — needs real footage and a real model, which is the same standing debt phases 4, 5 and 6
+each left.
 
 ---
 

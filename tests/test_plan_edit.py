@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 from pathlib import Path
 
 import pytest
@@ -45,55 +44,8 @@ from spec.origin import Stage
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
-FAKE = '''#!/usr/bin/env python3
-"""Stands in for hoocode: emits the event stream, records that it was called."""
-import json, pathlib, sys
-
-here = pathlib.Path(__file__).resolve().parent
-calls = here / "calls.txt"
-index = len(calls.read_text().splitlines()) if calls.exists() else 0
-with calls.open("a") as handle:
-    handle.write(sys.argv[-1][:40].replace("\\n", " ") + "\\n")
-
-replies = json.loads((here / "replies.json").read_text())
-reply = replies[min(index, len(replies) - 1)]
-if reply.get("exit"):
-    sys.stderr.write(reply.get("text", ""))
-    raise SystemExit(reply["exit"])
-if reply.get("silent"):
-    raise SystemExit(0)
-print(json.dumps({"type": "message_start"}))
-print(json.dumps({
-    "type": "message_end",
-    "message": {"role": "assistant", "content": [{"type": "text", "text": reply["text"]}]},
-}))
-'''
-
-
-@pytest.fixture
-def fake_agent(tmp_path, monkeypatch):
-    """Install a fake `hoocode` on PATH and return a handle to script it."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    script = bin_dir / agent.BINARY
-    script.write_text(FAKE)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-
-    class Handle:
-        directory = bin_dir
-
-        def replies(self, *replies: dict) -> None:
-            (bin_dir / "replies.json").write_text(json.dumps(list(replies)))
-
-        @property
-        def calls(self) -> int:
-            path = bin_dir / "calls.txt"
-            return len(path.read_text().splitlines()) if path.exists() else 0
-
-    handle = Handle()
-    handle.replies({"text": "{}"})
-    return handle
+# The `fake_agent` fixture that scripts that subprocess is in `conftest.py`:
+# phase 7 needs the same stand-in, for a job whose planners are cached.
 
 
 def plan_json(**overrides) -> str:

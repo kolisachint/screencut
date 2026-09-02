@@ -37,6 +37,7 @@ put it in the design first.
 | `compile/` | Time projection, ASS captions, SVG overlays, the FFmpeg graph |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `runner/` | Stage contract, `LocalRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
+| `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
 | `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles |
 | `golden/` | The deliberately bad fixture and the findings it must produce |
 | `schemas/` | **Generated.** `make generated` rewrites them; `make check-generated` fails if they drift |
@@ -52,8 +53,15 @@ make install     # package + dev dependencies
 make run         # generate the fixture and run the whole pipeline
 make take        # a Cap-format take: bundle -> job -> both renders (needs ASR)
 make broken      # the deliberately bad fixture, so §9.1's checks are seen firing
+make review      # the review UI over the jobs already rendered (§8)
 make check       # tests + generated-artifact drift + TypeScript typecheck
 ```
+
+`make review` serves the correction loop over whatever `make run` and `make take` have
+produced. It needs `pip install -e ".[review]"` — the server is optional so a headless
+machine installs the pipeline without one — and it wants the same `ENCODER` the jobs were
+rendered with, because a render is keyed on it and a mismatch re-encodes everything on the
+first correction instead of re-encoding what changed.
 
 `ENCODER=software` is the default and is byte-reproducible. `ENCODER=videotoolbox`
 is the target machine's hardware path and **does not exist off macOS** — the
@@ -103,6 +111,7 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | Job-level stages run before the per-profile ones, never interleaved | `runner/pipeline.py` — they rewrite the spec the others fingerprint |
 | No `duration_budget` reaches a model; tiering is aspect-independent | `plan/edit.py`, §4.4.1; the fingerprint omits profiles too |
 | A degraded artifact is never cached | `runner/pipeline.py` — caching it makes one lost network permanent |
+| A human correction is a layer over the spec, applied after every planner | `spec/corrections.py`, §8.1; a cached `plan_edit` would otherwise overwrite it |
 | §9.2 diffs the render against the *expected* transcript, never the raw one | `verify/transcript.py`; the raw diff is a number beside it, not the verdict |
 | Generated files match the models | `make check-generated`, `tests/test_generated.py` |
 
@@ -182,6 +191,14 @@ what arithmetic cannot.
 override rate, which measures how much of `trim` the model rejected. It is derived from
 overlap with `trim`'s proposal, never taken from the fragment.
 
+**A layer that the thing underneath rewrites.** Review edits `EditDecisions`; `plan_edit`
+writes `EditDecisions`; and `plan_edit`'s fingerprint does not read the fields review
+edits, so it stays a cache hit and applies its old fragment straight back over the
+correction. The fix is the shape the rest of this design already uses — state the
+difference, apply it last, keep what it differs from — and the general rule is that
+wherever two writers own one field, the later writer has to be the one that cannot be
+skipped.
+
 **Caching a fallback.** §7.4's degradation is what a stage produced *because it could not
 run*. Cache it and one lost network is permanent — every later run serves the degraded
 edit with the network back up and nothing saying why.
@@ -199,7 +216,7 @@ to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
 ## What is built, and what is blocked
 
-Phases 1–6 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
+Phases 1–7 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
 measured numbers, and everything phase 4 was waiting on is settled — Cap's cursor
 format, `whisper.cpp` as the ASR backend, and the memory budget per stage.
 
@@ -219,8 +236,13 @@ same thing as the real one:
   until a real recording moves them.
 - **No model has run.** `hoocode` is not installed here, so `plan_edit` has only ever
   taken §7.4's degradation path or run against the scripted stand-in in
-  `tests/test_plan_edit.py`. That stand-in tests our code end to end and tests nothing
+  `tests/conftest.py`. That stand-in tests our code end to end and tests nothing
   about editorial taste, which is what phase 5's stop-and-reassess gate is for.
+- **No take has been corrected.** Phase 7's loop is exercised against the fixture and the
+  scripted agent, so what is proved is that a correction costs one compile and one encode.
+  Which corrections you actually make most often is what §8 says should decide what the
+  overlay preview optimizes for, and what §10 needs ten to fifteen jobs of. Nothing in
+  `accepted_specs` came from real footage.
 
 **Do not write parsers for output you cannot run.** Three ASR parsers against JSON shapes
 nobody has seen is precisely the failure phase 0 exists to prevent. There is one ASR
