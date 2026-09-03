@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from spec.origin import learnable_paths, read_path
 from spec import (
     DEMO_16X9,
     SHORTS_9X16,
@@ -162,3 +163,62 @@ def test_constraints_yaml_layers_over_the_builtin_profiles():
     broken = Constraints.model_validate({"profiles": {"shorts_9x16": {"captions": {"type_scale": 0.2}}}})
     with pytest.raises(ValidationError, match="caption box"):
         resolve("shorts_9x16", broken)
+
+
+# --- what §10 is allowed to move ---------------------------------------------
+
+LEARNABLE = [
+    "duration_budget",
+    "captions.box.x",
+    "captions.box.y",
+    "captions.box.w",
+    "captions.box.h",
+    "captions.type_scale",
+    "captions.max_chars_per_line",
+    "captions.max_lines",
+    "captions.min_display_s",
+    "focus.zoom_factor",
+    "focus.min_dwell_ms",
+    "focus.min_gap_ms",
+    "focus.ease_ms",
+    "focus.crop_lag_ms",
+    "focus.max_crop_delta_per_frame",
+]
+"""§10's list, spelled out: the §4.3 focus tunables, caption geometry, and each
+profile's `duration_budget`. §4.6's trim tunables are on §10's list too and are
+not here because they are global rather than per-profile (`constraints.yaml`)."""
+
+
+def test_the_learnable_tunables_are_exactly_the_ones_section_10_names():
+    """Pinned, so that adding a profile field is a decision about whether a median
+    may move it rather than an omission nobody notices. The set is read off the
+    schema, which is the half that cannot go stale; this is the half that says
+    what the schema was supposed to say."""
+    assert learnable_paths(RenderProfile) == LEARNABLE
+
+
+def test_the_things_that_are_not_preferences_are_not_learnable():
+    """Output dimensions, fonts and encoder settings are §10's hand-written tier,
+    and a focus mode is what a profile *is* (§4.3) rather than a number about it.
+    None of them has a median, and this is the assertion that says so out loud."""
+    learnable = set(learnable_paths(RenderProfile))
+    for path in (
+        "name",
+        "width",
+        "height",
+        "fps",
+        "captions.font_family",
+        "focus.mode",
+        "safe_area.top",
+        "encode.crf",
+        "encode.encoder",
+    ):
+        assert path not in learnable, f"{path} is not a preference"
+
+
+def test_every_learnable_tunable_is_a_number_because_the_learner_takes_a_median():
+    """§10 learns by windowed median, so a tunable that is not numeric is not
+    learnable — it is a category error one layer up (`spec/types.py`'s `Tunable`)."""
+    profile = SHORTS_9X16.model_dump(mode="json")
+    for path in learnable_paths(RenderProfile):
+        assert isinstance(read_path(profile, path), (int, float)), path

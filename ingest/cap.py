@@ -43,12 +43,26 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spec.focus import FocusTrack
-from spec.source import Source
+from spec.source import Provenance, Source
 from verify.probe import probe
 
 from ingest.events import Sample, classify
 
 META_NAME = "recording-meta.json"
+
+SYNTHETIC_MARKER = "screencut-synthetic"
+"""A file `ingest/cap_fixture.py` drops in the bundles it writes.
+
+The fixture bundle is in Cap's own on-disk format and is read by this adapter
+exactly as a recording is — which is the point of it, and which means nothing
+downstream can tell the two apart unless the generated one says so. §10.2 needs
+that distinction and cannot recover it later (`spec/source.py`), so it is decided
+here, at the only boundary that knows.
+
+A generated bundle declaring itself, rather than a real one declaring itself, is
+the direction that fails safe: a marker that goes missing makes a fixture look
+real, but nothing a recorder writes can make a real take look generated, and the
+marker is written by the generator two functions away rather than by a person."""
 
 RESAMPLE_HZ = 30.0
 """The fixed grid `plan_focus` is handed, in samples per second.
@@ -205,6 +219,7 @@ def ingest(
     job_dir = Path(job_dir)
     take = read_take(recording, segment)
     facts = probe(take.video)
+    synthetic = (Path(recording) / SYNTHETIC_MARKER).exists()
 
     (job_dir / SOURCE_DIR).mkdir(parents=True, exist_ok=True)
     video = SOURCE_DIR / f"{source_id}.mp4"
@@ -214,6 +229,7 @@ def ingest(
 
     source = Source(
         source_id=source_id,
+        provenance=Provenance.SYNTHETIC if synthetic else Provenance.RECORDED,
         path=str(video),
         events_path=str(cursor),
         duration=facts.duration,

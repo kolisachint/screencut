@@ -17,7 +17,7 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 9 are built.** The data model everything else is written against;
+**Phases 1 to 9 are built, and phase 10's corpus with them.** The data model everything else is written against;
 the compiler that turns it into video — `plan_focus`, the time projection, ASS
 captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios at
 two different lengths; the runner that makes re-running cheap; and verification
@@ -41,7 +41,7 @@ desync, a wrong take, truncated narration, or a cut that landed inside a word.
 **Phase 7 closes the loop back to you.** `screencut-review` serves one page per job:
 the render for each profile, the verification report, the cuts grouped by why they were
 made, the segments with their tier and the reason for it, and each profile's duration
-budget as a number you can type over. Correcting any of them re-runs `compile` and
+budget — and every other tunable §10 may learn — as a number you can type over. Correcting any of them re-runs `compile` and
 `render` and **no planner at all** — the page says which stages ran, so the claim is
 watchable rather than asserted. A correction is a layer beside the spec rather than an
 edit of it, because the planners are cached and would otherwise write their answer back
@@ -69,6 +69,18 @@ golden set and reports drift split by field origin: strict per-field on the
 deterministic three quarters of the spec, distributional over N runs on the parts a
 model wrote — and it records what fraction of replies the schemas rejected, which
 is the first meter on risk R5.
+
+**Phase 10's learner is not built, and its corpus is.** §10 activates the learner after
+ten to fifteen accepted real jobs, and building it before then leaves dead code that still
+has to be debugged. But the *recording* half cannot wait for those jobs — it has to be
+running while they are made, because a job reviewed under a schema that did not record what
+it was accepted under is not learnable later, only reviewable again. So three things that
+could not be reconstructed afterwards are recorded now: what a spec was accepted *under*
+(the whole profile, since every tunable §10 moves is a profile field and none is in the
+spec), a correction to any of those tunables rather than to the budget alone, and whether a
+take was recorded or generated — a fixture bundle is in Cap's own format and reads
+identically otherwise. `make corpus` says how many accepted real jobs are still needed,
+and which tunables anyone has actually corrected.
 
 **Four things have not happened yet, and all are about what is installed rather
 than what is written.** No *real* recording has been ingested — that needs a
@@ -99,9 +111,10 @@ numbers under `docs/measurements/` and the harness in `tools/`:
 
 Next is a real take and a real model call — record one, run it, look at the cuts in
 review, and retune — which is phase 5's stop-and-reassess gate, and now everything
-for doing it exists: the loop, the golden replay to check a retune against, and the
-sidecar that says what the post is called. Phase 10's learner wants ten to fifteen
-accepted jobs, so the next thing to build is not code.
+for doing it exists: the loop, the golden replay to check a retune against, the sidecar
+that says what the post is called, and a corpus that will remember what you accepted and
+under what. Phase 10's learner wants ten to fifteen accepted jobs, so the next thing to
+build is not code.
 
 ## Quickstart
 
@@ -115,6 +128,7 @@ make narrate     # a script read in a cloned voice over a silent capture (§8)
 make broken      # the deliberately bad fixture, so the checks are seen firing
 make review      # the review UI on http://127.0.0.1:8000 (§8)
 make replay      # replay the golden set, report per-field spec drift (§11.1)
+make corpus      # what the learner would read, and how far off its gate it is (§10)
 make check       # tests, drift check, TypeScript typecheck, golden replay
 ```
 
@@ -152,7 +166,7 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 | `plan/` | The planners: `plan_focus` and `trim` deterministic; `plan_edit`, `script_draft`, `emphasis`, `plan_overlays` and the sidecar copy through the agent |
 | `synth/` | Open transcription, TTS, and forced alignment — §5.3's three ASR-shaped calls, kept apart |
 | `compile/` | The time projection, ASS captions, SVG overlay templates, the FFmpeg graph |
-| `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
+| `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles. `corpus.py` reads what §10's learner will learn from |
 | `runner/` | The stage contract, `LocalRunner` and `RemoteRunner`, the content-addressed cache, SQLite |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |

@@ -50,6 +50,24 @@ def _v1_to_v2(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+@migration(2, 3)
+def _v2_to_v3(doc: dict[str, Any]) -> dict[str, Any]:
+    """v3 records where the footage came from (`source.provenance`, §10.2).
+
+    A v2 document is marked `unknown` rather than guessed at. It is tempting to
+    read the job id or the events sidecar and decide, but every such rule is a
+    guess about a *corpus*, and a corpus with guesses in it is the one thing §10.1
+    cannot audit its way out of. `unknown` is not counted by `prefs.corpus`, which
+    is the same answer as "not real" for the learner and a truthful one for a
+    reader.
+    """
+    doc = dict(doc)
+    source = dict(doc.get("source") or {})
+    source.setdefault("provenance", "unknown")
+    doc["source"] = source
+    return doc
+
+
 class SpecVersionError(ValueError):
     pass
 

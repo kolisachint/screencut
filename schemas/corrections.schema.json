@@ -74,13 +74,22 @@
   "additionalProperties": false,
   "description": "What a person changed about one job. Sparse: absent means untouched.",
   "properties": {
-    "budgets": {
+    "profiles": {
       "additionalProperties": {
-        "exclusiveMinimum": 0.0,
-        "type": "number"
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "type": "object"
       },
-      "description": "Per-profile `duration_budget` overrides. 'Make the short shorter' is one field rather than a dozen re-tierings, and it is \u00a710's budget signal.",
-      "title": "Budgets",
+      "description": "Sparse per-profile tunable overrides, keyed by profile name and then by the dotted path of a learnable field. 'Make the short shorter' is `{shorts_9x16: {duration_budget: 20.0}}` \u2014 one field rather than a dozen re-tierings \u2014 and every key here is a signal \u00a710 reads.",
+      "title": "Profiles",
       "type": "object",
       "x-screencut-origin": {
         "origin": "deterministic",

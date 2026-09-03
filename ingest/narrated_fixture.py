@@ -38,7 +38,7 @@ from spec.audio import AudioTrack
 from spec.editspec import EditSpec
 from spec.edit import Tier
 from spec.narration import Narration, NarrationSource
-from spec.source import Source
+from spec.source import Provenance, Source
 
 SCRIPT = (
     "Here is the analytics dashboard we shipped this week. "
@@ -107,6 +107,7 @@ def build_narrated_spec(
         created_at="2026-01-01T00:00:00Z",
         source=Source(
             source_id="synthetic-narrated",
+            provenance=Provenance.SYNTHETIC,
             path="source/source.mp4",
             events_path="source/events.json",
             duration=len(beats) * slot_s,

@@ -36,7 +36,7 @@ from spec.edit import EditDecisions, Removal, RemovalKind, Segment, Tier
 from spec.editspec import EditSpec
 from spec.narration import Narration
 from spec.overlays import OverlayIntent, OverlayTemplate
-from spec.source import Source
+from spec.source import Provenance, Source
 from spec.types import Point
 
 
@@ -268,6 +268,7 @@ def build_spec(
         created_at="2026-01-01T00:00:00Z",
         source=Source(
             source_id="synthetic",
+            provenance=Provenance.SYNTHETIC,
             path=source_path,
             events_path=events_path,
             duration=len(beats) * slot_s,

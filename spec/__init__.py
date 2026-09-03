@@ -44,7 +44,7 @@ from spec.profiles import (
     SafeArea,
     profile,
 )
-from spec.source import Source
+from spec.source import Provenance, Source
 from spec.types import Normalized, Point, Rect, Seconds
 from spec.version import CURRENT_SPEC_VERSION
 
@@ -86,6 +86,7 @@ __all__ = [
     "RetieredSegment",
     "Seconds",
     "Segment",
+    "Provenance",
     "Source",
     "SpecChange",
     "StaleCorrection",

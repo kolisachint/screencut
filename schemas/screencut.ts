@@ -124,12 +124,14 @@ export interface Corrections {
    */
   retiered: RetieredSegment[];
   /**
-   * Per-profile `duration_budget` overrides. 'Make the short shorter' is one field
-   * rather than a dozen re-tierings, and it is §10's budget signal.
+   * Sparse per-profile tunable overrides, keyed by profile name and then by the dotted
+   * path of a learnable field. 'Make the short shorter' is `{shorts_9x16:
+   * {duration_budget: 20.0}}` — one field rather than a dozen re-tierings — and every
+   * key here is a signal §10 reads.
    *
    * @producedBy human (deterministic)
    */
-  budgets: Record<string, number>;
+  profiles: Record<string, Record<string, number>>;
 }
 
 /**
@@ -502,6 +504,17 @@ export interface Point {
 }
 
 /**
+ * Where the footage came from, which is what makes §10's gate answerable. §10.2
+ * activates the learner after ten to fifteen accepted *real* jobs, and without this
+ * field nothing can tell one from a fixture. Both look identical by the time they
+ * reach `accepted_specs`: `ingest/cap_fixture.py` writes a bundle in Cap's own on-disk
+ * format and it is read by the same adapter a real recording is. So the distinction
+ * has to be recorded at ingest — it cannot be recovered later, and a corpus that
+ * counts fixtures would have the learner learn synthetic taste and report it as yours.
+ */
+export type Provenance = "recorded" | "synthetic" | "unknown";
+
+/**
  * A rectangle in normalized coordinates, origin top-left.
  */
 export interface Rect {
@@ -680,6 +693,12 @@ export interface Source {
    * @producedBy ingest (deterministic)
    */
   source_id: string;
+  /**
+   * Whether this footage was recorded or generated (§10.2).
+   *
+   * @producedBy ingest (deterministic)
+   */
+  provenance: Provenance;
   /**
    * Media path, relative to the job directory.
    *

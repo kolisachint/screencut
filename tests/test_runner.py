@@ -21,7 +21,7 @@ from runner.contract import StageFailed, StageRequest
 from runner.local import LocalRunner
 from runner.pipeline import run_job
 from runner.stages import ORDER, STAGES
-from spec import Encoder
+from spec import Encoder, RenderProfile
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
@@ -86,16 +86,33 @@ def test_the_four_tables_of_section_5_4_exist(tmp_path):
 
 
 def test_the_learning_corpus_records_the_profile_it_was_accepted_under(tmp_path):
-    """Preferences are learned per profile (§4.1), so the corpus has to say which."""
+    """Preferences are learned per profile (§4.1), so the corpus has to say which —
+    and *which* means the profile, not its name.
+
+    This test carried this name for three phases while asserting only that the name
+    was stored, which is what let §10's corpus reach phase 10 unable to answer the
+    question it exists for: every tunable the learner moves is a `RenderProfile`
+    field, so a name is a record of what was accepted with what it was accepted
+    under thrown away. The name was right and the assertion was weaker than the
+    name — which is its own lesson, since a test named as a claim is only worth the
+    claim it actually checks."""
+    profile = resolve_profile("shorts_9x16").model_copy(update={"duration_budget": 11.0})
     with db.connect(tmp_path / "x.db") as connection:
-        db.record_accepted_spec(connection, job_id="j", profile="shorts_9x16", spec_json="{}")
+        db.record_accepted_spec(
+            connection,
+            job_id="j",
+            profile=profile.name,
+            spec_json="{}",
+            profile_json=profile.model_dump_json(),
+        )
         db.record_pref_change(
-            connection, profile="shorts_9x16", key="zoom_factor",
+            connection, profile="shorts_9x16", key="focus.zoom_factor",
             old_value=1.4, new_value=1.6, caused_by=["j1", "j2"],
         )
         accepted = connection.execute("SELECT * FROM accepted_specs").fetchone()
         change = connection.execute("SELECT * FROM pref_changes").fetchone()
     assert accepted["profile"] == "shorts_9x16"
+    assert RenderProfile.model_validate_json(accepted["profile_json"]).duration_budget == 11.0
     assert json.loads(change["caused_by"]) == ["j1", "j2"], "the jobs that caused it (§10.1)"
 
 

@@ -7,6 +7,7 @@
         "box": {
           "$ref": "#/$defs/Rect",
           "description": "Where the caption block sits in the output frame.",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -26,6 +27,7 @@
           "exclusiveMinimum": 0,
           "title": "Max Chars Per Line",
           "type": "integer",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -36,6 +38,7 @@
           "exclusiveMinimum": 0,
           "title": "Max Lines",
           "type": "integer",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -46,6 +49,7 @@
           "exclusiveMinimum": 0.0,
           "title": "Min Display S",
           "type": "number",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -58,6 +62,7 @@
           "maximum": 0.5,
           "title": "Type Scale",
           "type": "number",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -182,6 +187,7 @@
           "minimum": 0,
           "title": "Crop Lag Ms",
           "type": "integer",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -192,6 +198,7 @@
           "minimum": 0,
           "title": "Ease Ms",
           "type": "integer",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -204,6 +211,7 @@
           "maximum": 1.0,
           "title": "Max Crop Delta Per Frame",
           "type": "number",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -214,6 +222,7 @@
           "minimum": 0,
           "title": "Min Dwell Ms",
           "type": "integer",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -224,6 +233,7 @@
           "minimum": 0,
           "title": "Min Gap Ms",
           "type": "integer",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -243,6 +253,7 @@
           "minimum": 1.0,
           "title": "Zoom Factor",
           "type": "number",
+          "x-screencut-learnable": true,
           "x-screencut-origin": {
             "origin": "deterministic",
             "stage": "config"
@@ -362,6 +373,7 @@
       "exclusiveMinimum": 0.0,
       "title": "Duration Budget",
       "type": "number",
+      "x-screencut-learnable": true,
       "x-screencut-origin": {
         "origin": "deterministic",
         "stage": "config"

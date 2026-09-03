@@ -1,12 +1,14 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 9 built — the spec (`spec/`), the Cap adapter and fixture generators
+Status: phases 1 to 9 built, plus phase 10's corpus — the spec (`spec/`), the Cap adapter and fixture generators
 (`ingest/`), the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the
 model stages `script_draft`, `plan_edit`, `emphasis`, `plan_overlays` and the metadata
 sidecar (`plan/`), open transcription, synthesis and forced alignment (`synth/`), the
 FFmpeg compiler (`compile/`), verification through §9.2 (`verify/`), the runner, cache,
 agent adapter, remote runner and job record (`runner/`), the review UI (`review/`) and the
-golden-set replay harness (`golden/`). `screencut ingest <take>.cap --out <job>` turns a
+golden-set replay harness (`golden/`). Of §10's three tiers only the hand-written one
+runs; what phase 10 added early is the *corpus* the learner will read (`prefs/corpus.py`),
+because recording is the one part of it that cannot be done retroactively. `screencut ingest <take>.cap --out <job>` turns a
 recorder bundle into a job; `screencut narrate <job>` attaches a script and a voice
 reference to one; `screencut run <job>` renders it to every profile, skips whatever the
 cache already holds, verifies each render, diffs the rendered audio against what the edit
@@ -17,6 +19,8 @@ still not happened, all for want of what is installed on the machine this was bu
 *real* recording has been ingested, **no model has run** (every model stage has only ever
 taken §7.4's degradation path or a scripted stand-in, so risk R5 has a meter and no
 reading), §9.2 has never round-tripped speech, and no voice has been synthesized. See
+A fifth thing has not happened for a different reason: **no job has been accepted**, so
+§10's learner is unbuilt by design and `make corpus` says how far off its gate is. See
 [`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is
@@ -406,7 +410,7 @@ SQLite holds four things, none of them large:
 |---|---|
 | `jobs` | Job record, status, spec version, degradations recorded by §7.4 |
 | `stage_cache` | Cache key → artifact path, so lookup is a query and not a directory walk |
-| `accepted_specs` | The learning corpus: accepted `EditSpec`s with the profile they were accepted under |
+| `accepted_specs` | The learning corpus: accepted `EditSpec`s with the whole `RenderProfile` they were accepted under, not its name — every tunable §10 moves is a profile field and none is in the spec |
 | `pref_changes` | Changelog of every learned-default move and the jobs that caused it (§10.1) |
 
 Never put media in the database. The reason for having one at all is that both the
@@ -805,6 +809,14 @@ over accepted specs for every tunable in §4.3 and §4.6, plus caption geometry,
 level, and each profile's `duration_budget` — which is what "cut pacing" now concretely
 means (§4.4.1). Plain statistics. Given decision #5, this tier does most of the work.
 
+Which fields those are is `learnable=True` on the field itself (`spec/profiles.py`), beside
+the origin metadata and for the same reason §11.1 gives: a list of learnable tunables kept
+next to the code drifts from the code, and the drifted copy is always the one being read.
+The correction layer, the correction diff and the review page all read that one set. The
+§4.6 trim tunables are the exception to "per profile" and stay in `constraints.yaml`,
+because they are global; the rest are `RenderProfile` fields, which is why §5.4 records the
+whole profile rather than its name.
+
 The budget is the most valuable thing here. It is a single scalar per profile that decides
 how aggressively that profile cuts, it is corrected every time you lengthen or shorten a
 render in review, and unlike a tier assignment it is a number rather than a judgement.
@@ -820,6 +832,13 @@ into the LLM stages. Only relevant to §7.1's model-using stages.
 - Use a windowed median, so an old preference can be superseded.
 - Every default change is written to a changelog with the jobs that caused it. "It got
   worse and nobody can explain why" is the characteristic failure of self-tuning systems.
+- Read what was accepted, never what would be resolved now. Re-resolving a profile by name
+  returns the learner's own last move once it has made one, and the learner would then read
+  that back as a preference a person expressed — the changelog failure and a feedback loop
+  at once. The profile is snapshotted at acceptance for this reason (§5.4).
+- A tunable nobody moved has no signal, however many jobs there are. Ten acceptances of the
+  number a profile already had are not ten votes for it, and a median over them proposes the
+  default it started from — which would put a change in the changelog that nobody made.
 
 ### 10.2 Bootstrapping
 
@@ -827,6 +846,21 @@ With synthetic fixtures and zero accepted jobs there is nothing to learn from. S
 hand-written values in `constraints.yaml`; the learner activates after ~10–15 accepted
 real jobs. **Built earlier, it is dead code that still has to be debugged** — hence its
 position late in the phase plan.
+
+The *corpus* is the exception, and it is the opposite case: it has to exist before the jobs
+do, because a job reviewed under a schema that did not record what it was accepted under is
+not learnable later, only reviewable again. `prefs/corpus.py` reads what has been accepted,
+applies §10.1's and §10.2's rules as filters, counts what each one dropped, and reports how
+far off this gate the collection is — not yet, by this much, rather than a zero that reads
+like a measurement.
+
+"Real" is a question the corpus has to be able to answer, and it could not: `EditSpec`
+carried nothing saying where its footage came from, and `ingest/cap_fixture.py` writes a
+bundle in Cap's own on-disk format that the real adapter reads. So `source.provenance`
+(spec v3) records `recorded`, `synthetic` or `unknown` at ingest, decided at the only
+boundary that knows. A document from before v3 migrates to `unknown` rather than to a
+guess: every rule that would infer it is a guess about a *corpus*, and a corpus with
+guesses in it is the one thing §10.1 cannot audit its way out of.
 
 ## 11. Golden set
 

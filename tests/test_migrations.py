@@ -12,6 +12,7 @@ import pytest
 
 from spec import CURRENT_SPEC_VERSION, load_spec, load_spec_file
 from spec.migrations import SpecVersionError, migrate, registered_migrations
+from spec.source import Provenance
 
 V1 = Path(__file__).parent / "data" / "spec_v1.json"
 
@@ -51,3 +52,18 @@ def test_a_document_from_the_future_is_refused_rather_than_guessed_at():
 def test_a_document_with_no_version_is_refused():
     with pytest.raises(SpecVersionError, match="no spec_version"):
         load_spec({"job_id": "x"})
+
+
+def test_a_v2_document_reaches_v3_marked_unknown_rather_than_guessed_at():
+    """v3 added `source.provenance` (§10.2). A document from before it does not
+    say whether its footage was recorded, and a rule that inferred one — from the
+    job id, or from whether there is an events sidecar — would put a guess in the
+    one corpus §10.1 cannot audit its way out of."""
+    spec = load_spec_file(V1)
+    assert spec.source.provenance is Provenance.UNKNOWN
+
+
+def test_the_v1_document_still_carries_no_provenance_of_its_own():
+    """The migration supplies it; the artifact is not edited to hide that it
+    never had one."""
+    assert "provenance" not in json.loads(V1.read_text())["source"]

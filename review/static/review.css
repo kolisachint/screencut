@@ -49,6 +49,12 @@ tr.changed td { background: #fffceb; }
 .profile video { width: 100%; background: #000; border-radius: 4px; }
 .profile label { display: block; margin-top: 0.7rem; color: var(--dim); }
 .profile input { width: 7rem; padding: 0.25rem 0.4rem; font: inherit; }
+.profile > label { font-size: 1rem; }
+.tunables { margin-top: 0.8rem; border-top: 1px solid var(--line); padding-top: 0.5rem; }
+.tunables summary { cursor: pointer; color: var(--dim); font-size: 0.85rem; }
+/* A column of paths and a column of numbers: fifteen rows of ragged inputs are
+   fifteen rows nobody scans for the one that has been changed. */
+.tunables label { display: grid; grid-template-columns: 14rem 7rem; align-items: center; gap: 0.5rem; margin-top: 0.35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
 
 .finding { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
 .fail { color: var(--fail); }
