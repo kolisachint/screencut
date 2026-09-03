@@ -274,6 +274,24 @@ its manifest and `render` replays it, so a cached compile plus a toolchain upgra
 an option the new binary does not have. Anything that belongs to the *binary* rather than
 to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
+**A real span that the file cannot express.** ASS timestamps are centiseconds, so two
+kinetic caption events whose boundary times are 3ms apart print the same string, and the
+event between them has `start == end` — which libass draws as a one-frame flicker or not at
+all. The guard compares the *rendered timestamps*, not the floats: the floats say the
+window is 3ms long and the file says it is nothing, and the file is what plays. Same
+remedy as comparing the safe area in pixels — decide in the units the thing happens in.
+Whenever a value is written out at coarser precision than it is computed at, the question
+is what collapses.
+
+**A stage whose output nothing read.** `emphasis` has written `Word.emphasis` since phase 9
+and `compile` has projected it into `EditedWord` since phase 2, and no renderer drew it —
+so the one model-written field in the caption subtree changed no pixel, and phase 5's
+stop-and-reassess gate could never have been applied to it. It was found by building the
+renderer that finally needed it, not by anything failing. The family is the check that
+never fires and the record that cannot answer its question: **something a stage produces
+that nothing reads is not a feature waiting for a consumer, it is an unmeasured stage.**
+Ask of every field a stage writes which pixel or which decision depends on it.
+
 **A test named as a claim, asserting something weaker than its name.**
 `test_the_learning_corpus_records_the_profile_it_was_accepted_under` asserted that the
 *name* was stored, and passed for three phases. The name was right; §10's corpus reached
@@ -300,6 +318,10 @@ the recording starts.
 
 Phases 1–9 are built, and phase 10's corpus with them — the learner itself is not, and
 `make corpus` says why: it needs ten to fifteen accepted real jobs and there are none.
+Kinetic captions, the first of the later phases, has landed on top: `shorts_9x16` lights
+each word as it is spoken, `demo_16x9` keeps the plain block, and it cost one
+`RenderProfile` field plus a second renderer in `compile/captions.py` — no schema change,
+no migration, zero golden drift.
 Phase 0 has been run: `docs/environment-findings.md` holds the
 measured numbers, and everything phase 4 was waiting on is settled — Cap's cursor
 format, `whisper.cpp` as the ASR backend, and the memory budget per stage.

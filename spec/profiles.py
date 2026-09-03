@@ -124,6 +124,19 @@ class CaptionStyle(SpecModel):
     )
     max_lines: Annotated[int, Field(gt=0)] = spec_field(default=2, produced_by=Stage.CONFIG, learnable=True)
     min_display_s: PositiveSeconds = spec_field(default=0.8, produced_by=Stage.CONFIG, learnable=True)
+    kinetic: bool = spec_field(default=False, produced_by=Stage.CONFIG)
+    """Word-highlight captions rather than plain timed blocks (§6.2).
+
+    Not learnable, and for `focus.mode`'s reason: this says which renderer a
+    profile uses, not a number about one, and there is no median of two
+    renderers. It lives on the profile rather than in the spec because the spec
+    already carries what both renderers read — the per-word timings — and which
+    of them draws them is a property of the output, not of the take. That is why
+    this phase needed no migration and moved no golden spec.
+
+    Off by default. A profile opts in, because the plain block is the one that
+    stays legible at any pace and the highlight is what a short buys with its
+    attention span."""
 
 
 class FocusProjection(SpecModel):
@@ -247,6 +260,11 @@ SHORTS_9X16 = RenderProfile(
         type_scale=0.040,
         max_chars_per_line=20,
         max_lines=3,
+        # §6.2's trigger, taken literally: plain blocks look plain at a short's
+        # pace, and twenty characters a line is little enough text that a lit
+        # word is easy to find. The demo keeps plain blocks — a widescreen line
+        # is read in one glance and a highlight travelling across it is noise.
+        kinetic=True,
     ),
     focus=FocusProjection(mode=FocusMode.CROP_PATH, zoom_factor=1.0, crop_lag_ms=250),
 )

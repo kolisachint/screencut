@@ -200,6 +200,8 @@ def test_the_learnable_tunables_are_exactly_the_ones_section_10_names():
 def test_the_things_that_are_not_preferences_are_not_learnable():
     """Output dimensions, fonts and encoder settings are §10's hand-written tier,
     and a focus mode is what a profile *is* (§4.3) rather than a number about it.
+    Whether captions are kinetic (§6.2) is the same kind of thing one layer down:
+    it names a renderer, and there is no median of two renderers.
     None of them has a median, and this is the assertion that says so out loud."""
     learnable = set(learnable_paths(RenderProfile))
     for path in (
@@ -208,6 +210,7 @@ def test_the_things_that_are_not_preferences_are_not_learnable():
         "height",
         "fps",
         "captions.font_family",
+        "captions.kinetic",
         "focus.mode",
         "safe_area.top",
         "encode.crf",

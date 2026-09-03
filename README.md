@@ -17,7 +17,8 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 9 are built, and phase 10's corpus with them.** The data model everything else is written against;
+**Phases 1 to 9 are built, phase 10's corpus with them, and kinetic captions after
+them.** The data model everything else is written against;
 the compiler that turns it into video — `plan_focus`, the time projection, ASS
 captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios at
 two different lengths; the runner that makes re-running cheap; and verification
@@ -81,6 +82,14 @@ spec), a correction to any of those tunables rather than to the budget alone, an
 take was recorded or generated — a fixture bundle is in Cap's own format and reads
 identically otherwise. `make corpus` says how many accepted real jobs are still needed,
 and which tunables anyone has actually corrected.
+
+**Kinetic captions are the first of the later phases to land.** `shorts_9x16` now lights
+each word as it is spoken instead of showing a plain block; `demo_16x9` keeps the block,
+because a widescreen line is read in one glance. It cost one `RenderProfile` field and a
+second renderer in `compile/captions.py` — no schema change, no migration and zero golden
+drift, exactly as §6.2 predicted when it decided in phase 1 that caption blocks would carry
+per-word timings they had no use for yet. It is also the first thing that draws
+`Word.emphasis`, which the phase-9 stage had been writing to no visible effect.
 
 **Four things have not happened yet, and all are about what is installed rather
 than what is written.** No *real* recording has been ingested — that needs a
