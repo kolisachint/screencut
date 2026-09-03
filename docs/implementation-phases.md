@@ -1074,6 +1074,14 @@ way of being expressed, because nothing fails — reviewers simply never produce
 learner arrives to find a corpus in which zoom factor was never corrected and concludes,
 correctly and uselessly, that nobody minds.
 
+There was a test for the first finding, and it had the right name.
+`test_the_learning_corpus_records_the_profile_it_was_accepted_under` asserted that the
+profile's *name* was stored, and went green for three phases. Naming tests as claims is
+this repository's convention and it earns its keep — but only where the body checks the
+claim the name makes, and a test that asserts less than its name fails silently by
+passing. It is the same shape as the finding it failed to catch: something recorded the
+decision and not the conditions.
+
 The golden set caught the spec change on the first replay and named its stage
 (`source.provenance: 'unknown' -> 'synthetic' (ingest)`), which is exactly the strict half
 of §11.1 doing its job. `golden/demo_v1` is a recipe, so re-approving it was re-running the

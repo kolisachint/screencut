@@ -274,6 +274,14 @@ its manifest and `render` replays it, so a cached compile plus a toolchain upgra
 an option the new binary does not have. Anything that belongs to the *binary* rather than
 to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
+**A test named as a claim, asserting something weaker than its name.**
+`test_the_learning_corpus_records_the_profile_it_was_accepted_under` asserted that the
+*name* was stored, and passed for three phases. The name was right; §10's corpus reached
+phase 10 unable to answer the question it exists for anyway. Naming tests as claims
+(above) only pays if the body checks the claim the name makes — and the failure mode is
+silent, because a test that asserts less than its name still goes green. When a test's
+name states an invariant, read the body and ask what it would let through.
+
 **A record that could not answer the question it existed for.** Three at once, found by
 reading §10 against what phase 7 actually wrote down. `accepted_specs` stored the profile's
 *name*, and every tunable §10 learns is a `RenderProfile` field — so the row recorded what
