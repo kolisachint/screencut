@@ -5,10 +5,19 @@ everything here is a deterministic projection of a spec a model may have written
 """
 
 import math
+import re
 
 import pytest
 
-from compile.captions import render_ass, timestamp, wrap
+from compile.captions import (
+    ACTIVE_COLOUR,
+    BASE_COLOUR,
+    EMPHASIS_COLOUR,
+    line_count,
+    render_ass,
+    timestamp,
+    wrap,
+)
 from compile.graph import (
     OutputZoomRegion,
     _zoom_at,
@@ -21,7 +30,7 @@ from compile.graph import (
     zoom_expressions,
 )
 from compile.overlays import OverlayAsset, render_asset
-from compile.timeline import project
+from compile.timeline import EditedCaption, EditedWord, project
 from ingest.fixtures import build_spec
 from plan import plan_focus
 from prefs import resolve_profile
@@ -164,7 +173,6 @@ def test_the_ass_file_is_sized_to_the_profile(spec):
     ass = render_ass(timeline.captions, profile)
     assert f"PlayResX: {profile.width}" in ass and f"PlayResY: {profile.height}" in ass
     assert f",{int(round(profile.captions.type_scale * profile.height))}," in ass
-    assert ass.count("Dialogue:") == len(timeline.captions)
 
 
 def test_caption_events_are_in_output_time(spec):
@@ -194,3 +202,152 @@ def test_a_profiles_captions_fit_its_box():
         profile = resolve_profile(name)
         longest = "x" * profile.captions.max_chars_per_line
         assert len(wrap(longest, profile.captions.max_chars_per_line).split("\\N")) == 1
+
+
+# --- kinetic captions (§6.2) -------------------------------------------------
+
+
+def _events(ass: str) -> list[tuple[str, str, str]]:
+    """(start, end, text) for every `Dialogue` line, in file order."""
+    found = []
+    for line in ass.splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        head, _, text = line.partition(",,0,0,0,,")
+        fields = head.split(",")
+        found.append((fields[1], fields[2], text))
+    return found
+
+
+def _lit(text: str, colour: str) -> list[str]:
+    """The words wearing one colour, in order."""
+    return re.findall(rf"\{{\\1c&H{colour}&\}}(\S+?)\{{\\1c&H{BASE_COLOUR}&\}}", text)
+
+
+def _plain(text: str) -> str:
+    """The event's text with the override tags taken back off."""
+    return re.sub(r"\{\\1c&H[0-9A-F]{6}&\}", "", text.split("}", 1)[1])
+
+
+def _caption(words, t_out=None):
+    edited = [EditedWord(t_in=t_in, t_out=t_o, text=w, emphasis=e) for t_in, t_o, w, e in words]
+    return EditedCaption(
+        t_in=edited[0].t_in, t_out=t_out if t_out is not None else edited[-1].t_out, words=edited
+    )
+
+
+def test_a_plain_profile_emits_one_event_per_caption_block(spec):
+    """The renderer §6.2 shipped first, unchanged: the word array is carried and
+    not drawn, one timed block per caption."""
+    profile = resolve_profile("demo_16x9")
+    assert not profile.captions.kinetic
+    timeline = project(spec, profile)
+    events = _events(render_ass(timeline.captions, profile))
+    assert len(events) == len(timeline.captions)
+    assert not any(_lit(text, ACTIVE_COLOUR) for _, _, text in events)
+
+
+def test_a_kinetic_profile_lights_exactly_one_word_at_a_time(spec):
+    profile = resolve_profile("shorts_9x16")
+    assert profile.captions.kinetic
+    timeline = project(spec, profile)
+    events = _events(render_ass(timeline.captions, profile))
+    assert len(events) > len(timeline.captions), "a block is more than one event now"
+    for _, _, text in events:
+        assert len(_lit(text, ACTIVE_COLOUR)) == 1
+
+
+def test_the_lit_word_is_the_one_being_spoken():
+    """The whole claim of the mode. Each event begins when its word does."""
+    caption = _caption([(0.0, 0.4, "here", False), (0.5, 0.9, "is", False), (1.0, 1.6, "why", False)])
+    profile = resolve_profile("shorts_9x16")
+    events = _events(render_ass([caption], profile))
+    assert [(start, _lit(text, ACTIVE_COLOUR)[0]) for start, _, text in events] == [
+        ("0:00:00.00", "here"),
+        ("0:00:00.50", "is"),
+        ("0:00:01.00", "why"),
+    ]
+
+
+def test_a_word_stays_lit_until_the_next_one_begins():
+    """Not until it *ends*. The gaps between spoken words are tens of
+    milliseconds and going dark across each one strobes — so the events tile the
+    block with no unlit hole, and the last word holds whatever `_hold_minimum`
+    added to a block a cut left too short to read."""
+    caption = _caption([(0.0, 0.4, "here", False), (0.5, 0.9, "is", False)], t_out=3.0)
+    events = _events(render_ass([caption], resolve_profile("shorts_9x16")))
+    assert [e[0] for e in events] == ["0:00:00.00", "0:00:00.50"]
+    assert [e[1] for e in events] == ["0:00:00.50", "0:00:03.00"]
+    for before, after in zip(events, events[1:]):
+        assert before[1] == after[0], "the block has no gap between its words"
+
+
+def test_both_renderers_break_the_same_lines_in_the_same_places(spec):
+    """One wrap, read two ways. A kinetic event with its colours stripped is
+    character for character the plain event — which is what keeps §9.1's line
+    checks measuring the file that was written."""
+    plain = resolve_profile("demo_16x9")
+    kinetic = plain.model_copy(
+        update={"captions": plain.captions.model_copy(update={"kinetic": True})}
+    )
+    timeline = project(spec, plain)
+    was = {text for _, _, text in _events(render_ass(timeline.captions, plain))}
+    now = {_plain(text) for _, _, text in _events(render_ass(timeline.captions, kinetic))}
+    assert now == {_plain(text) for text in was}
+
+
+def test_a_window_too_brief_to_print_is_dropped_rather_than_emitted_empty():
+    """ASS times are centiseconds, so two words 4ms apart are a real window in
+    Python and the same instant in the file. libass given `start == end` draws a
+    flicker or nothing; the neighbours meet at that timestamp instead."""
+    # 0.301 and 0.304 both print as `.30`, so the window between them has no
+    # time in the file however real it is in the projection.
+    caption = _caption(
+        [(0.0, 0.30, "one", False), (0.301, 0.303, "two", False), (0.304, 0.9, "three", False)]
+    )
+    events = _events(render_ass([caption], resolve_profile("shorts_9x16")))
+    assert all(start != end for start, end, _ in events), "no zero-length event"
+    assert [_lit(text, ACTIVE_COLOUR)[0] for _, _, text in events] == ["one", "three"], (
+        "the word that could not be printed is skipped, not shown empty"
+    )
+    for before, after in zip(events, events[1:]):
+        assert before[1] == after[0], "dropping a window leaves no hole"
+
+
+def test_an_emphasized_word_is_coloured_in_both_renderers():
+    """`Word.emphasis` has been written since phase 9 and drawn by nothing. It is
+    the one model-written field in the caption subtree (§7.1), and a model stage
+    whose output no pixel depends on is a stage nobody can review."""
+    caption = _caption([(0.0, 0.4, "never", True), (0.5, 0.9, "again", False)], t_out=2.0)
+    for name in ("shorts_9x16", "demo_16x9"):
+        ass = render_ass([caption], resolve_profile(name))
+        assert any(_lit(text, EMPHASIS_COLOUR) == ["never"] for _, _, text in _events(ass)), name
+
+
+def test_the_lit_word_outranks_emphasis_while_it_is_lit():
+    """A word that is both is the one being read right now. Letting emphasis win
+    would make it the only word in the block that never lights up."""
+    caption = _caption([(0.0, 0.4, "never", True), (0.5, 0.9, "again", False)], t_out=2.0)
+    first, second = _events(render_ass([caption], resolve_profile("shorts_9x16")))
+    assert _lit(first[2], ACTIVE_COLOUR) == ["never"] and not _lit(first[2], EMPHASIS_COLOUR)
+    assert _lit(second[2], ACTIVE_COLOUR) == ["again"] and _lit(second[2], EMPHASIS_COLOUR) == ["never"]
+
+
+def test_the_style_and_the_tag_that_ends_a_colour_name_one_colour():
+    """Written twice in the file and once in the source. A reset disagreeing with
+    the style leaves every word after a highlight a shade off, on the profiles
+    that highlight and nowhere else."""
+    profile = resolve_profile("shorts_9x16")
+    ass = render_ass([_caption([(0.0, 0.4, "here", False)])], profile)
+    assert f"&H00{BASE_COLOUR}," in ass, "the style's PrimaryColour"
+    assert f"{{\\1c&H{BASE_COLOUR}&}}" in ass, "the tag that ends a coloured run"
+
+
+def test_the_line_count_check_counts_the_lines_the_renderer_wrote(spec):
+    """§9.1 reads `line_count` and the renderer reads `wrap_indices`. They are the
+    same call now, so a caption cannot pass the check and render over its box."""
+    for name in ("shorts_9x16", "demo_16x9"):
+        profile = resolve_profile(name)
+        for caption in project(spec, profile).captions:
+            drawn = _events(render_ass([caption], profile))[0][2]
+            assert line_count(caption, profile) == _plain(drawn).count("\\N") + 1

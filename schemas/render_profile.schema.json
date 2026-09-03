@@ -22,6 +22,15 @@
             "stage": "config"
           }
         },
+        "kinetic": {
+          "default": false,
+          "title": "Kinetic",
+          "type": "boolean",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "config"
+          }
+        },
         "max_chars_per_line": {
           "default": 32,
           "exclusiveMinimum": 0,

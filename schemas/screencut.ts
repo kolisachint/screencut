@@ -92,6 +92,10 @@ export interface CaptionStyle {
    * @producedBy config (deterministic)
    */
   min_display_s: number;
+  /**
+   * @producedBy config (deterministic)
+   */
+  kinetic: boolean;
 }
 
 /**

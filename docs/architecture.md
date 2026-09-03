@@ -451,10 +451,27 @@ Kdenlive is the escape hatch.
 `plan_captions` emits `CaptionBlock`s that **always carry per-word timings**, because
 `align` produces them anyway and the cost of carrying them is zero.
 
-The first compiler renders plain timed ASS blocks and ignores the word array. Kinetic
-word-highlight rendering is a later, purely-compiler-side phase: per-word ASS override
-tags with active-word colouring. Because the spec already carries the data, that phase
-changes no schema, invalidates no golden specs, and needs no migration.
+The first compiler rendered plain timed ASS blocks and ignored the word array. Kinetic
+word-highlight rendering — per-word ASS override tags with active-word colouring — is now
+built, and the prediction held: it changed no schema, invalidated no golden spec and needed
+no migration. The one new field is `captions.kinetic` on the `RenderProfile`, which says
+how a job is *drawn* rather than what it is; `shorts_9x16` sets it and `demo_16x9` does not,
+because a widescreen line is read in one glance and a highlight travelling across it is
+noise. It is not learnable, for `focus.mode`'s reason: it names a renderer, and there is no
+median of two renderers.
+
+Both renderers share one wrap. `wrap_indices` returns the word indices per line and `wrap`
+is that joined back up, because the kinetic renderer has to decorate one word and leave
+every other character where the plain one put it — two wrappers is "one formula written
+twice", and §9.1's line checks read the same call the renderer does.
+
+**Colour is the only channel either renderer uses**, and that is a constraint rather than a
+preference. An override that changed weight or scale would change glyph advance, the line
+would re-wrap under the highlight, and a caption that reflows on every word is worse than
+one that never moves. This is also where `Word.emphasis` finally reaches a pixel: the stage
+had written it since phase 9 and the compiler had projected it since phase 2, with no pixel
+depending on it — a model stage whose output was invisible is one nobody can review, which
+is the same shape of finding as a check that never fires.
 
 Those word timings turned out to have a second use nobody planned for. §4.5 needs
 `compile` to trim a caption block to a time range when a cut lands inside it, and per-word

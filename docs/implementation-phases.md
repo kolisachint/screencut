@@ -4,7 +4,7 @@ Companion to [`architecture.md`](architecture.md), which holds the design and th
 reasoning. This document holds only the order of work and what "done" means at each step.
 
 Phase 0 has been run and phases 1 to 9 are built; phase 10 has its corpus and not its
-learner. Four phases carry a caveat rather than a clean finish: phase 4 has no real take,
+learner, and the first of the later phases — kinetic captions — has landed. Four phases carry a caveat rather than a clean finish: phase 4 has no real take,
 phase 5 has never called a model, phase 6's transcript round-trip has never met speech, and
 phase 10 is waiting on ten to fifteen accepted real jobs — the first three because of what
 is not installed on the machine this was built on, the fourth because the jobs have to be
@@ -1095,13 +1095,64 @@ Unordered. Pull them in when the need is felt, not on a schedule.
 
 | Phase | Trigger |
 |---|---|
-| **Kinetic captions** | When plain blocks look too plain for shorts. Purely a compiler change — the spec already carries word timings, so no migration and no golden-spec churn. |
+| **Kinetic captions** — **built** | Trigger fired: plain blocks look plain at a short's pace. It was purely a compiler change, exactly as predicted — see below. |
 | **Overlay preview in review UI** | When you know which corrections you make most often and can optimize for them. |
 | **VLM perceptual verification** | When real failures are slipping past the deterministic checks. Goes through the phase-5 adapter — the agent CLI takes image paths in print mode, so there is no new mechanism to build. |
 | **MLT export and re-ingest** | The first time you want Kdenlive for something the spec cannot express. |
 | **`still_4x5` profile** | When photo posts are actually being made; may turn out that `shorts_9x16` suffices. |
 | **`RemoteRunner`** | When local inference becomes the bottleneck, or phase 0/8 forces it earlier. |
 | **Multi-take assembly** | When re-recording a section and stitching it in is something you actually want (decision #24). A `source_id` on `removals` and `segments`, plus a compiler that concatenates across takes — a schema migration and a compiler change, not a redesign. |
+
+### Kinetic captions — how it came out
+
+The one phase in this table whose trigger had fired, and the cheapest thing left that is
+not gated on a real recording. §6.2 predicted in phase 1 that it would change no schema,
+invalidate no golden spec and need no migration, and that is what happened: `golden replay`
+came back with zero drift on every field, because a `RenderProfile` is not an `EditSpec`.
+`CaptionBlock` has carried per-word timings since phase 1 for exactly this.
+
+`compile/captions.py` grew a second renderer over the same block: one ASS event per
+*active-word window* instead of one per block, with the spoken word in amber. Both
+renderers go through one wrap — `wrap_indices` returns the word indices per line and `wrap`
+is that joined back up — because the kinetic path has to decorate one word and leave every
+other character where the plain path put it. Two wrappers would have been "one formula
+written twice", and §9.1's `caption_line_length` and `caption_lines` read the same call the
+renderer does, so a caption cannot pass the check and render over its box.
+
+**Colour is the only channel, and that is arithmetic rather than taste.** A highlight that
+changed weight or scale changes glyph advance, the line re-wraps under it, and the whole
+caption jitters once per word. The mechanism check `next-phase` asks for is what settled
+it: a five-second `lavfi` render of one line under three mid-line `\1c` overrides came back
+with an identical ink bounding box in all three frames, which is the property the design
+needs and the one a comment claiming it would not have proved.
+
+Two things came out of building it that the plan did not know:
+
+- **A window can be real in the projection and empty in the file.** ASS times are
+  centiseconds, so two word starts 3ms apart print identically and the event between them
+  has `start == end` — which libass draws as a one-frame flicker or not at all. The guard
+  compares the *rendered timestamps* rather than the floats, which is the same remedy as
+  comparing the safe area in pixels: decide in the units the thing actually happens in. The
+  spans are contiguous, so dropping one leaves its neighbours meeting at the timestamp it
+  would have printed, and the caption has no hole — it just never lights that word.
+- **`Word.emphasis` had never reached a pixel.** `emphasis` has written it since phase 9
+  and `compile` has projected it into `EditedWord` since phase 2, and nothing rendered it:
+  a model stage whose entire output was invisible, so phase 5's stop-and-reassess gate
+  could never have been applied to it. It is now a second hue, in both renderers — a
+  different one from the active word, because the two are on screen together and say
+  different things. Same family as the check that never fires and the record that cannot
+  answer its question: **something a stage produces that nothing reads is not a feature
+  waiting for a consumer, it is an unmeasured stage.**
+
+A word stays lit until the *next* one begins rather than going dark when it ends. The gaps
+between spoken words are tens of milliseconds and de-highlighting across each one strobes;
+it also means the last word holds through whatever `_hold_minimum` added to a block a cut
+left too short to read, instead of the block hanging there with nothing lit.
+
+`demo_16x9` did not opt in, and its ASS file is byte-identical before and after — the
+check that says this change is per profile rather than global. Its `compile` cache key
+moved anyway, because the fingerprint hashes the whole profile and the profile grew a
+field. That is the fingerprint being right at the cost of one re-encode, not a bug.
 
 ---
 
