@@ -22,6 +22,9 @@ from pydantic.fields import FieldInfo
 #: JSON Schema extension key under which origin metadata is emitted.
 ORIGIN_KEY = "x-screencut-origin"
 
+#: JSON Schema extension key marking a field the preference learner may move (§10).
+LEARNABLE_KEY = "x-screencut-learnable"
+
 
 class Stage(str, Enum):
     """A producer of spec fields. Mirrors the pipeline of architecture.md §5."""
@@ -90,17 +93,27 @@ def origin_of(stage: Stage) -> Origin:
     return STAGE_ORIGIN[stage]
 
 
-def spec_field(*, produced_by: Stage, **kwargs: Any) -> Any:
+def spec_field(*, produced_by: Stage, learnable: bool = False, **kwargs: Any) -> Any:
     """`pydantic.Field` with the producing stage recorded in the JSON Schema.
 
     Use for every field of every spec model. `tests/test_origin.py` fails the
     build if a field is added without one.
+
+    `learnable` marks a tunable §10 is allowed to move: a reviewer may correct it
+    per job, and the learner may later propose a new default for it. It lives on
+    the field for the same reason the origin does — a list of learnable tunables
+    kept beside the code drifts from the code, and the drifted copy is always the
+    one being read. Absence is the default because most fields are not
+    preferences, and `tests/test_profiles.py` pins the resulting set so that
+    adding a profile field is a decision rather than an omission.
     """
     extra = dict(kwargs.pop("json_schema_extra", None) or {})
     extra[ORIGIN_KEY] = {
         "stage": produced_by.value,
         "origin": origin_of(produced_by).value,
     }
+    if learnable:
+        extra[LEARNABLE_KEY] = True
     return Field(json_schema_extra=extra, **kwargs)
 
 
@@ -183,3 +196,76 @@ def _walk(
         for nested in _nested_models(info.annotation):
             out.extend(_walk(nested, f"{path}.", found, chain, missing_only))
     return out
+
+
+def _is_learnable(info: FieldInfo) -> bool:
+    extra = info.json_schema_extra
+    return isinstance(extra, dict) and extra.get(LEARNABLE_KEY) is True
+
+
+def learnable_paths(model: type[BaseModel]) -> list[str]:
+    """Dotted paths of every scalar §10 is allowed to move, in declaration order.
+
+    Leaves only. A marked field whose value is a value object — `captions.box`,
+    a `Rect` — yields its components (`captions.box.x`, ...) rather than itself,
+    because everything downstream of this list works in scalars: a reviewer's
+    correction is one number in one input, `pref_changes.key` is one TEXT column,
+    and a median is defined per component and not over a rectangle.
+
+    An unmarked field is still descended into, since a container is not itself a
+    preference but its parts may be: `RenderProfile.captions` is not learnable and
+    `captions.type_scale` is.
+    """
+    return _walk_learnable(model, "", False, ())
+
+
+def _walk_learnable(
+    model: type[BaseModel], prefix: str, inside: bool, chain: tuple[type[BaseModel], ...]
+) -> list[str]:
+    if model in chain:  # as in `_walk`: a self-referential model would not terminate
+        return []
+    chain = chain + (model,)
+    out: list[str] = []
+    for name, info in model.model_fields.items():
+        path = f"{prefix}{name}"
+        marked = inside or _is_learnable(info)
+        nested = _nested_models(info.annotation)
+        if nested:
+            for submodel in nested:
+                out.extend(_walk_learnable(submodel, f"{path}.", marked, chain))
+        elif marked:
+            out.append(path)
+    return out
+
+
+class UnknownPath(KeyError):
+    """A dotted path no model field answers to. Its own type so a caller can tell
+    a typo apart from a value it disagrees with."""
+
+
+def read_path(data: dict[str, Any], path: str) -> Any:
+    node: Any = data
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise UnknownPath(path)
+        node = node[part]
+    return node
+
+
+def write_path(data: dict[str, Any], path: str, value: Any) -> None:
+    """Set `path` on a `model_dump(mode="json")` document, in place.
+
+    Never creates a missing level. The caller writes into a document the model
+    just produced, so an absent key means the path is wrong rather than new, and
+    inventing the level would turn that into a validation error one layer away
+    from its cause.
+    """
+    parts = path.split(".")
+    node: Any = data
+    for part in parts[:-1]:
+        if not isinstance(node, dict) or part not in node:
+            raise UnknownPath(path)
+        node = node[part]
+    if not isinstance(node, dict) or parts[-1] not in node:
+        raise UnknownPath(path)
+    node[parts[-1]] = value

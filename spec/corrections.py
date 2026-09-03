@@ -31,9 +31,9 @@ from pydantic import Field, model_validator
 
 from spec.edit import EditDecisions, Removal, Segment, Tier
 from spec.editspec import EditSpec
-from spec.origin import Stage, spec_field
+from spec.origin import Stage, learnable_paths, read_path, spec_field, write_path
 from spec.profiles import RenderProfile
-from spec.types import PositiveSeconds, Seconds, SpecModel, TimeSpan, approx_eq
+from spec.types import Seconds, SpecModel, TimeSpan, Tunable, approx_eq
 
 CORRECTIONS_NAME = "corrections.json"
 PROPOSED_NAME = "proposed.json"
@@ -89,14 +89,46 @@ class Corrections(SpecModel):
         produced_by=Stage.HUMAN,
         description="Segments to re-rank (§4.4.1). Which tiers then survive stays arithmetic.",
     )
-    budgets: dict[str, PositiveSeconds] = spec_field(
+    profiles: dict[str, dict[str, Tunable]] = spec_field(
         default_factory=dict,
         produced_by=Stage.HUMAN,
         description=(
-            "Per-profile `duration_budget` overrides. 'Make the short shorter' is one "
-            "field rather than a dozen re-tierings, and it is §10's budget signal."
+            "Sparse per-profile tunable overrides, keyed by profile name and then by "
+            "the dotted path of a learnable field. 'Make the short shorter' is "
+            "`{shorts_9x16: {duration_budget: 20.0}}` — one field rather than a dozen "
+            "re-tierings — and every key here is a signal §10 reads."
         ),
     )
+    """Sparse and deep-merged, the same shape as `constraints.yaml` over the built-in
+    profiles (§4.1) and for the same reason: a layer that restates the defaults is a
+    second source of truth, and the drifted copy is the one being read.
+
+    Addressed by dotted path rather than by nested dict because everything
+    downstream of a correction is flat — the review UI renders one input per path,
+    `pref_changes.key` is one column, and §10's median is per scalar. Which paths
+    exist is `learnable_paths(RenderProfile)`, read from the schema rather than
+    listed here, so a profile field cannot be correctable in one place and unknown
+    in the other."""
+
+    @model_validator(mode="after")
+    def _corrects_only_learnable_tunables(self) -> "Corrections":
+        """A correction may move a preference and nothing else (§10).
+
+        Rejected rather than ignored, and for the same reason `StaleCorrection` is
+        raised rather than skipped: a dropped correction is a loop that appears to
+        work. The names are checked here, at the layer, so a typo fails while the
+        person who made it is still looking — rather than at `apply_to_profile`,
+        one render later, or never, if that profile is not in this run.
+        """
+        allowed = set(learnable_paths(RenderProfile))
+        for name, overrides in self.profiles.items():
+            unknown = sorted(set(overrides) - allowed)
+            if unknown:
+                raise ValueError(
+                    f"profile {name!r}: {', '.join(unknown)} is not a learnable tunable. "
+                    f"Correctable paths are: {', '.join(sorted(allowed))}"
+                )
+        return self
 
     @model_validator(mode="after")
     def _addresses_each_thing_once(self) -> "Corrections":
@@ -111,7 +143,11 @@ class Corrections(SpecModel):
 
     @property
     def empty(self) -> bool:
-        return not (self.reinstated or self.retiered or self.budgets)
+        # `any` over the values rather than over the dict: a profile whose override
+        # map is empty is a profile nobody corrected, and calling that a correction
+        # makes the pipeline write a `proposed.json` for a difference that is not
+        # there.
+        return not (self.reinstated or self.retiered or any(self.profiles.values()))
 
     # --- on disk -------------------------------------------------------------
 
@@ -144,10 +180,29 @@ class Corrections(SpecModel):
         )
 
     def apply_to_profile(self, profile: RenderProfile) -> RenderProfile:
-        budget = self.budgets.get(profile.name)
-        if budget is None or approx_eq(budget, profile.duration_budget):
+        """This profile with the corrections addressed to it applied.
+
+        Round-tripped through validation rather than assigned, for the same reason
+        `apply_to` is: a caption box corrected outside the safe area, or a type
+        scale that no longer fits the box, fails here beside the correction that
+        caused it rather than at render time (`resolve_profile` makes the same
+        argument about `constraints.yaml`).
+        """
+        overrides = self.profiles.get(profile.name)
+        if not overrides:
             return profile
-        return profile.model_copy(update={"duration_budget": budget})
+        data = profile.model_dump(mode="json")
+        changed = False
+        for path, value in overrides.items():
+            # A correction equal to what the profile already says is not a
+            # correction. Applying it anyway would put a row in §10's record for a
+            # difference the render never had. Compared as numbers because every
+            # learnable tunable is one (`spec/types.py`'s `Tunable`).
+            if approx_eq(float(read_path(data, path)), float(value)):
+                continue
+            write_path(data, path, value)
+            changed = True
+        return RenderProfile.model_validate(data) if changed else profile
 
     def _apply_to_edit(self, decisions: EditDecisions) -> EditDecisions:
         kept: list[Removal] = []
@@ -283,16 +338,24 @@ def diff_specs(
                 )
             )
 
+    # Every learnable tunable, not only the budget: §10 proposes a new default for
+    # each of them, and it can only do that from a record that carries each of
+    # them. Read from the schema so the diff cannot know about fewer tunables than
+    # the correction layer accepts.
+    tunables = learnable_paths(RenderProfile)
     after_by_name = {p.name: p for p in corrected_profiles or []}
     for profile in proposed_profiles or []:
         other = after_by_name.get(profile.name)
-        if other is not None and not approx_eq(profile.duration_budget, other.duration_budget):
+        if other is None:
+            continue
+        before_doc = profile.model_dump(mode="json")
+        after_doc = other.model_dump(mode="json")
+        for path in tunables:
+            before, after = read_path(before_doc, path), read_path(after_doc, path)
+            if approx_eq(float(before), float(after)):
+                continue
             changes.append(
-                SpecChange(
-                    path=f"profiles.{profile.name}.duration_budget",
-                    before=profile.duration_budget,
-                    after=other.duration_budget,
-                )
+                SpecChange(path=f"profiles.{profile.name}.{path}", before=before, after=after)
             )
 
     return CorrectionDiff(changes=changes)

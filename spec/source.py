@@ -2,12 +2,39 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated
 
 from pydantic import Field, field_validator
 
 from spec.origin import Stage, spec_field
 from spec.types import PositiveSeconds, SpecModel
+
+
+class Provenance(str, Enum):
+    """Where the footage came from, which is what makes §10's gate answerable.
+
+    §10.2 activates the learner after ten to fifteen accepted *real* jobs, and
+    without this field nothing can tell one from a fixture. Both look identical by
+    the time they reach `accepted_specs`: `ingest/cap_fixture.py` writes a bundle
+    in Cap's own on-disk format and it is read by the same adapter a real
+    recording is. So the distinction has to be recorded at ingest — it cannot be
+    recovered later, and a corpus that counts fixtures would have the learner
+    learn synthetic taste and report it as yours.
+    """
+
+    RECORDED = "recorded"
+    """A take from a real recorder. The only kind §10 counts."""
+
+    SYNTHETIC = "synthetic"
+    """Generated: `ingest/fixtures.py`, `ingest/narrated_fixture.py`, or a bundle
+    `ingest/cap_fixture.py` produced. Renders, verifies and replays like any other
+    job — it is only barred from teaching preferences."""
+
+    UNKNOWN = "unknown"
+    """Ingested before spec v3, when nothing recorded this. Not counted, because
+    the honest answer to "was this real" is that nobody wrote it down — and
+    guessing here would be guessing on the learner's behalf."""
 
 
 class Source(SpecModel):
@@ -22,6 +49,11 @@ class Source(SpecModel):
     """
 
     source_id: str = spec_field(produced_by=Stage.INGEST, description="Stable id of the take within the job.")
+    provenance: Provenance = spec_field(
+        default=Provenance.UNKNOWN,
+        produced_by=Stage.INGEST,
+        description="Whether this footage was recorded or generated (§10.2).",
+    )
     path: str = spec_field(produced_by=Stage.INGEST, description="Media path, relative to the job directory.")
     events_path: str | None = spec_field(
         default=None,

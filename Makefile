@@ -1,5 +1,5 @@
 # screencut — see docs/architecture.md and docs/implementation-phases.md.
-.PHONY: help install schema types generated check-generated typecheck test fixture run take narrate review broken replay check clean
+.PHONY: help install schema types generated check-generated typecheck test fixture run take narrate review broken replay corpus check clean
 
 FIXTURE ?= data/fixtures/demo01
 NARRATED ?= data/fixtures/narrated01
@@ -52,6 +52,9 @@ review:  ## Serve the review UI (§8). ENCODER must match how the jobs were rend
 
 replay:  ## Replay the golden set and report per-field spec drift (§11.1).
 	python3 -m golden.replay
+
+corpus:  ## What the preference learner would read, and how far off §10.2's gate it is.
+	python3 -m prefs.corpus
 
 broken:  ## Run the deliberately bad fixture, so §9.1's checks are seen firing.
 	python3 -m ingest.fixtures --out data/fixtures/broken01 --job-id fixture --broken

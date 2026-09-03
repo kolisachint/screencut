@@ -38,7 +38,7 @@ put it in the design first.
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `runner/` | Stage contract, `LocalRunner`, `RemoteRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
 | `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
-| `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles |
+| `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles. `corpus.py` — what §10's learner will read, and how far off its gate it is |
 | `golden/` | `replay.py` — §11.1's harness — plus the archived cases and the findings the bad fixture must produce |
 | `schemas/` | **Generated.** `make generated` rewrites them; `make check-generated` fails if they drift |
 | `data/` | Gitignored. Job directories and `screencut.db` |
@@ -56,6 +56,7 @@ make narrate     # a script read in a cloned voice over a silent capture (needs 
 make broken      # the deliberately bad fixture, so §9.1's checks are seen firing
 make review      # the review UI over the jobs already rendered (§8)
 make replay      # replay the golden set, report per-field spec drift (§11.1)
+make corpus      # what §10's learner would read, and how many jobs it still needs
 make check       # tests + drift + TypeScript typecheck + golden replay
 ```
 
@@ -127,6 +128,9 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | A stage reads the spec as the stages before it left it | `runner/pipeline.py` rebuilds the job context after every `apply`; otherwise a fingerprint keys on a document that has moved |
 | A human correction is a layer over the spec, applied after every planner | `spec/corrections.py`, §8.1; a cached `plan_edit` would otherwise overwrite it |
 | §9.2 diffs the render against the *expected* transcript, never the raw one | `verify/transcript.py`; the raw diff is a number beside it, not the verdict |
+| A spec is accepted *with* the profile it was accepted under, never with its name | `runner/db.py` migration 0004; re-resolving the name returns the learner's own last move |
+| What §10 may move is `learnable=True` on the field, read by the correction layer, the diff and the review page alike | `spec/profiles.py`, `spec/origin.py`; `tests/test_profiles.py` pins the set |
+| A take records whether it was recorded or generated | `spec/source.py` — `Provenance`; §10.2 counts real jobs and cannot recover this later |
 | Generated files match the models | `make check-generated`, `tests/test_generated.py` |
 
 ## Conventions
@@ -270,9 +274,25 @@ its manifest and `render` replays it, so a cached compile plus a toolchain upgra
 an option the new binary does not have. Anything that belongs to the *binary* rather than
 to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
+**A record that could not answer the question it existed for.** Three at once, found by
+reading §10 against what phase 7 actually wrote down. `accepted_specs` stored the profile's
+*name*, and every tunable §10 learns is a `RenderProfile` field — so the row recorded what
+was accepted and dropped what it was accepted under, and re-resolving the name later
+returns the learner's own last move. `Corrections` could express a budget and nothing else,
+so exit criterion 1's signal — a zoom factor corrected the same way across several jobs —
+had no way of being produced; nothing failed, reviewers simply never made one. And nothing
+said whether a take was recorded or generated, though §10.2 counts real jobs and the
+fixture bundle is in Cap's own format. Same family as the fingerprint that read too much
+and the exclusion that expired, one layer up: **a record is only as good as the question it
+will be asked**, and unlike those two this kind cannot be fixed afterwards — a corpus
+recorded wrong is fifteen reviews to do again. Check what a record will be read for before
+the recording starts.
+
 ## What is built, and what is blocked
 
-Phases 1–9 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
+Phases 1–9 are built, and phase 10's corpus with them — the learner itself is not, and
+`make corpus` says why: it needs ten to fifteen accepted real jobs and there are none.
+Phase 0 has been run: `docs/environment-findings.md` holds the
 measured numbers, and everything phase 4 was waiting on is settled — Cap's cursor
 format, `whisper.cpp` as the ASR backend, and the memory budget per stage.
 
@@ -317,6 +337,13 @@ and against stand-ins for both speech backends. None is the same thing as the re
   Which corrections you actually make most often is what §8 says should decide what the
   overlay preview optimizes for, and what §10 needs ten to fifteen jobs of. Nothing in
   `accepted_specs` came from real footage.
+
+- **No job has been accepted.** §10's learner is gated on ten to fifteen, and every filter
+  it will read through — verification, provenance, a recorded profile — is built and
+  tested against rows written straight to the record. What none of it has seen is a
+  preference. `ACTIVATION_JOBS` is §10.2's lower bound taken literally, and the minimum
+  sample count that gates one *default* moving is deliberately not decided here: that is a
+  number to pick having seen a distribution, not before.
 
 **Do not write parsers for output you cannot run.** Three ASR parsers against JSON shapes
 nobody has seen is precisely the failure phase 0 exists to prevent. There is one ASR

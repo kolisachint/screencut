@@ -38,6 +38,7 @@
  *   diff: CorrectionDiff,
  *   reports: Record<string, VerifyReport>,
  *   renders: string[],
+ *   tunables: string[],
  *   decision: string | null,
  *   ran?: string[],
  *   cached?: string[],
@@ -57,8 +58,21 @@ let job = null;
 const reinstated = new Map();
 /** Re-tiered segments, keyed by `t_in`. @type {Map<number, Tier>} */
 const retiered = new Map();
-/** Budget overrides by profile name. @type {Map<string, number>} */
-const budgets = new Map();
+/**
+ * Tunable overrides, by profile name and then by the dotted path of a learnable
+ * field. Which paths exist comes from the payload rather than a list here: the
+ * server reads them off the schema (§10), and a copy in the browser is the
+ * drifted one nobody notices.
+ * @type {Map<string, Map<string, number>>}
+ */
+const tuned = new Map();
+
+/** @param {string} profile @returns {Map<string, number>} */
+function tunedFor(profile) {
+  let overrides = tuned.get(profile);
+  if (!overrides) tuned.set(profile, (overrides = new Map()));
+  return overrides;
+}
 
 /**
  * @param {string} tag
@@ -149,12 +163,14 @@ async function showJob(jobId) {
 function seedFromSaved(payload) {
   reinstated.clear();
   retiered.clear();
-  budgets.clear();
+  tuned.clear();
   for (const removal of payload.corrections.reinstated) {
     reinstated.set(key(removal.t_in, removal.t_out), { t_in: removal.t_in, t_out: removal.t_out });
   }
   for (const segment of payload.corrections.retiered) retiered.set(segment.t_in, segment.tier);
-  for (const [name, budget] of Object.entries(payload.corrections.budgets)) budgets.set(name, budget);
+  for (const [name, overrides] of Object.entries(payload.corrections.profiles)) {
+    for (const [path, value] of Object.entries(overrides)) tunedFor(name).set(path, value);
+  }
 }
 
 /**
@@ -201,23 +217,54 @@ function failedBanner(reports) {
   return el("div", { class: "banner failed" }, [el("h2", {}, ["Verification failed"]), el("ul", {}, lines)]);
 }
 
+/**
+ * One numeric input for one learnable tunable on one profile.
+ *
+ * No min or max: the constraints belong to `RenderProfile` and are applied when
+ * the correction is validated against it, so spelling them here would be a second
+ * copy of a bound that the first copy is free to change. `step` is inferred from
+ * the profile's own value because that is what distinguishes a line count from a
+ * zoom factor without asking the schema a question it answers in $refs.
+ * @param {RenderProfile} profile
+ * @param {string} path
+ */
+function tunableInput(profile, path) {
+  const proposed = /** @type {number} */ (read(profile, path));
+  const current = tunedFor(profile.name).get(path) ?? proposed;
+  const step = Number.isInteger(proposed) ? "1" : "0.005";
+  const input = /** @type {HTMLInputElement} */ (
+    el("input", { type: "number", step, value: String(current) })
+  );
+  input.addEventListener("change", () => {
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) return;
+    // A value equal to the profile's own is not a correction; recording it as one
+    // would put a change in the §10 record that changed nothing.
+    if (value === proposed) tunedFor(profile.name).delete(path);
+    else tunedFor(profile.name).set(path, value);
+  });
+  const label = el("label", {}, [`${path} `]);
+  label.append(input);
+  return label;
+}
+
+/**
+ * Read a dotted path off a payload object — the browser half of
+ * `spec.origin.read_path`.
+ * @param {any} node
+ * @param {string} path
+ */
+function read(node, path) {
+  for (const part of path.split(".")) node = node[part];
+  return node;
+}
+
+const BUDGET = "duration_budget";
+
 /** @param {JobPayload} payload */
 function profilesSection(payload) {
   const cards = payload.proposed_profiles.map((profile) => {
     const report = payload.reports[profile.name];
-    const budget = budgets.get(profile.name) ?? profile.duration_budget;
-    const input = /** @type {HTMLInputElement} */ (
-      el("input", { type: "number", min: "0.5", step: "0.5", value: String(budget) })
-    );
-    input.addEventListener("change", () => {
-      const value = Number(input.value);
-      if (!Number.isFinite(value) || value <= 0) return;
-      // A budget equal to the profile's own is not a correction; recording it as
-      // one would put a change in the §10 record that changed nothing.
-      if (value === profile.duration_budget) budgets.delete(profile.name);
-      else budgets.set(profile.name, value);
-    });
-
     const card = el("div", { class: "profile" }, [el("h3", {}, [profile.name])]);
     if (payload.renders.includes(profile.name)) {
       card.append(
@@ -230,9 +277,21 @@ function profilesSection(payload) {
     } else {
       card.append(el("p", { class: "note" }, ["not rendered yet"]));
     }
-    const label = el("label", {}, [`duration budget (${profile.width}x${profile.height}) `]);
-    label.append(input);
-    card.append(label);
+
+    // The budget is in front and the rest are folded away, because §10 says the
+    // budget is the one that decides how this profile cuts and the others trim
+    // how it looks. Fifteen inputs abreast would hide that ranking.
+    if (payload.tunables.includes(BUDGET)) {
+      card.append(el("p", { class: "note" }, [`${profile.width}x${profile.height}`]));
+      card.append(tunableInput(profile, BUDGET));
+    }
+    const rest = payload.tunables.filter((path) => path !== BUDGET);
+    if (rest.length) {
+      const details = el("details", { class: "tunables" }, [el("summary", {}, ["tunables"])]);
+      for (const path of rest) details.append(tunableInput(profile, path));
+      card.append(details);
+    }
+
     if (report) card.append(findings(report));
     return card;
   });
@@ -394,13 +453,15 @@ function actions() {
 
 /** @returns {Corrections} */
 function corrections() {
-  /** @type {Record<string, number>} */
-  const budgeted = {};
-  for (const [name, budget] of budgets) budgeted[name] = budget;
+  /** @type {Record<string, Record<string, number>>} */
+  const profiles = {};
+  for (const [name, overrides] of tuned) {
+    if (overrides.size) profiles[name] = Object.fromEntries(overrides);
+  }
   return {
     reinstated: [...reinstated.values()],
     retiered: [...retiered.entries()].map(([t_in, tier]) => ({ t_in, tier })),
-    budgets: budgeted,
+    profiles,
   };
 }
 

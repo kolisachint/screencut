@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from ingest.cap import SYNTHETIC_MARKER
 from ingest.cap_fixture import META_FPS, START_TIME_S, write_bundle
 from ingest.fixtures import DEFAULT_BEATS
 from prefs import load_constraints
@@ -25,6 +26,7 @@ from runner.stages import RECORDED_STAGES
 from spec import Encoder
 from spec.focus import FocusKind
 from spec.migrations import load_spec_file
+from spec.source import Provenance
 from synth.asr import model_path
 from verify.report import Severity
 
@@ -61,6 +63,28 @@ def test_ingest_writes_a_job_the_pipeline_can_run(bundle, tmp_path):
     assert JobConfig.load(job).stages == list(RECORDED_STAGES), (
         "the recipe, named once in runner/stages.py rather than copied here"
     )
+
+
+@needs_ffmpeg
+def test_a_generated_bundle_is_ingested_as_synthetic_and_a_recording_as_recorded(bundle, tmp_path):
+    """This bundle is in Cap's own format and is read by the same adapter a real
+    take is — which is the point of it, and which means §10.2's gate cannot tell
+    the two apart unless the generated one says so at ingest. It cannot be
+    recovered later: by `accepted_specs` the two are the same document.
+
+    A generated bundle declaring itself is the direction that fails safe. Nothing
+    a recorder writes can make a real take look generated, so the marker is what
+    the fixture generator adds rather than what a recording must remember to."""
+    job = tmp_path / "provenance"
+    cli_main(["ingest", str(bundle), "--out", str(job)])
+    assert load_spec_file(job / "spec.json").source.provenance is Provenance.SYNTHETIC
+
+    recording = tmp_path / "real.cap"
+    shutil.copytree(bundle, recording)
+    (recording / SYNTHETIC_MARKER).unlink()
+    real = tmp_path / "recorded"
+    cli_main(["ingest", str(recording), "--out", str(real)])
+    assert load_spec_file(real / "spec.json").source.provenance is Provenance.RECORDED
 
 
 @needs_ffmpeg

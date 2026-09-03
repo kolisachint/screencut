@@ -32,6 +32,20 @@ Decibels = float
 """A level in decibels. Named for the reader; unconstrained on purpose, since
 both gains and negative ducking amounts are ordinary values."""
 
+Tunable = int | float
+"""One learnable scalar, addressed by dotted path rather than by field.
+
+Used where a document carries a *correction to* another document's field rather
+than the field itself (`spec/corrections.py`). Numeric because §10 learns by
+windowed median, and a median is what a learnable tunable has to have — which is
+also why fonts and focus modes are excluded at the field (`spec/profiles.py`)
+rather than tolerated here. The value's real constraints belong to the field
+being corrected, and re-validating that model is what applies them.
+
+`int` first: pydantic's smart union keeps an exact type, but the declaration
+order is what a reader checks, and a caption line count coerced to 3.0 would
+reach `max_chars_per_line` as a float."""
+
 
 class SpecModel(BaseModel):
     """Base for every spec model.

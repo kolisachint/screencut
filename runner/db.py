@@ -7,8 +7,11 @@ accepted jobs in `shorts_9x16`" is a query, and retrofitting a database once the
 golden set matters is worse than starting with one.
 
 Six tables, none of them large. `pref_changes` still has no writer — it waits for
-the learner (§10) — and was created with the first migration for the same reason
-`accepted_specs` was: a migration that adds a table to a database with history is
+the learner (§10). `accepted_specs` has one, and migration 0004 gave it the column
+that makes what it records learnable: the profile the spec was accepted under, in
+full, because every tunable §10 moves is a `RenderProfile` field and none of them
+is in the spec. Both tables were created with the first migration for the same
+reason: a migration that adds a table to a database with history is
 ordinary, and one that adds it under pressure while the learner is being debugged
 is not. `reviews` is phase 7's own, because what a reviewer changed is a different
 record from what they accepted: a rejection changes no spec and still says
@@ -96,6 +99,12 @@ MIGRATIONS: list[tuple[str, str]] = [
             created_at TEXT NOT NULL
         );
         CREATE INDEX reviews_by_job ON reviews (job_id, id);
+        """,
+    ),
+    (
+        "0004_accepted_profile",
+        """
+        ALTER TABLE accepted_specs ADD COLUMN profile_json TEXT;
         """,
     ),
 ]
@@ -267,17 +276,50 @@ def verified_jobs(connection: sqlite3.Connection, profile: str) -> list[str]:
 
 
 def record_accepted_spec(
-    connection: sqlite3.Connection, *, job_id: str, profile: str, spec_json: str
+    connection: sqlite3.Connection,
+    *,
+    job_id: str,
+    profile: str,
+    spec_json: str,
+    profile_json: str,
 ) -> None:
-    """An accepted spec, with the profile it was accepted under (§5.4).
+    """An accepted spec, with the whole profile it was accepted under (§5.4).
 
     Per profile because preferences are learned per profile: caption Y in vertical
     is a different number from caption Y in widescreen.
+
+    The profile document and not only its name, because every tunable §10 learns
+    — `duration_budget`, the §4.3 focus numbers, caption geometry — is a field of
+    `RenderProfile` and none of them is in the `EditSpec`. A row carrying the name
+    alone records what was accepted and not what it was accepted *under*, and the
+    corpus cannot be repaired afterwards: re-resolving the name reads today's
+    defaults, which after the learner's first move are the learner's own output.
+    That is §10.1's changelog failure and a feedback loop in one, so the snapshot
+    is taken at the moment of acceptance.
+
+    The column is nullable because migration 0004 added it to a table that already
+    had rows, and a row from before it cannot be given a profile that is not a
+    guess. `prefs.corpus` skips those and says how many it skipped, rather than
+    inventing one.
     """
     connection.execute(
-        "INSERT INTO accepted_specs (job_id, profile, spec_json, accepted_at) VALUES (?, ?, ?, ?)",
-        (job_id, profile, spec_json, now()),
+        """
+        INSERT INTO accepted_specs (job_id, profile, spec_json, profile_json, accepted_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (job_id, profile, spec_json, profile_json, now()),
     )
+
+
+def accepted_specs(connection: sqlite3.Connection, profile: str) -> list[sqlite3.Row]:
+    """Every acceptance recorded for one profile, oldest first — §10's corpus.
+
+    Oldest first because §10.1 learns over a *window*: the caller takes the last N,
+    and "an old preference can be superseded" is a statement about order.
+    """
+    return connection.execute(
+        "SELECT * FROM accepted_specs WHERE profile = ? ORDER BY id", (profile,)
+    ).fetchall()
 
 
 def record_review(

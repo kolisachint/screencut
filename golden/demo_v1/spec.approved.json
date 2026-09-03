@@ -5398,8 +5398,9 @@
     "has_audio": true,
     "height": 1080,
     "path": "source/source.mp4",
+    "provenance": "synthetic",
     "source_id": "synthetic",
     "width": 1920
   },
-  "spec_version": 2
+  "spec_version": 3
 }

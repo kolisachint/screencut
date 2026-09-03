@@ -12,6 +12,13 @@ value wrong for both.
 
 Profile fields are `Stage.CONFIG`: hand-written now, moved by the learner later
 (§10) — deterministic either way, and checked strictly by golden replay (§11.1).
+
+*Which* of them the learner may move is `learnable=True` on the field, and the set
+it produces is §10's list exactly: the §4.3 focus tunables, caption geometry, and
+`duration_budget`. §4.6's trim tunables are on that list too and are not here —
+they are global rather than per-profile and live in `constraints.yaml`. Everything
+unmarked is unmarked for a reason stated at the field: an output dimension is not
+a preference, and neither is a font or a focus mode.
 """
 
 from __future__ import annotations
@@ -96,16 +103,27 @@ class CaptionStyle(SpecModel):
     Learned per profile (§4.1) — this is the example that argues for two layers.
     """
 
-    box: Rect = spec_field(produced_by=Stage.CONFIG, description="Where the caption block sits in the output frame.")
+    box: Rect = spec_field(
+        produced_by=Stage.CONFIG,
+        learnable=True,
+        description="Where the caption block sits in the output frame.",
+    )
     font_family: str = spec_field(default="Inter", produced_by=Stage.CONFIG)
+    """Not learnable. §10 puts fonts in the hand-written tier, and `constraints.yaml`
+    is where one is chosen — a median over a set of font names is not a preference,
+    it is a category error."""
+
     type_scale: Annotated[float, Field(gt=0.0, le=0.5)] = spec_field(
         default=0.045,
         produced_by=Stage.CONFIG,
+        learnable=True,
         description="Cap height as a fraction of output height.",
     )
-    max_chars_per_line: Annotated[int, Field(gt=0)] = spec_field(default=32, produced_by=Stage.CONFIG)
-    max_lines: Annotated[int, Field(gt=0)] = spec_field(default=2, produced_by=Stage.CONFIG)
-    min_display_s: PositiveSeconds = spec_field(default=0.8, produced_by=Stage.CONFIG)
+    max_chars_per_line: Annotated[int, Field(gt=0)] = spec_field(
+        default=32, produced_by=Stage.CONFIG, learnable=True
+    )
+    max_lines: Annotated[int, Field(gt=0)] = spec_field(default=2, produced_by=Stage.CONFIG, learnable=True)
+    min_display_s: PositiveSeconds = spec_field(default=0.8, produced_by=Stage.CONFIG, learnable=True)
 
 
 class FocusProjection(SpecModel):
@@ -113,22 +131,28 @@ class FocusProjection(SpecModel):
     and every one is a number you can also just set by hand when a job needs it."""
 
     mode: FocusMode = spec_field(produced_by=Stage.CONFIG)
+    """Not learnable. Which projection a profile uses is what the profile *is* —
+    vertical crops and widescreen zooms (§4.3) — and there is no median of two
+    modes. The tunables underneath it are the preferences."""
+
     zoom_factor: Annotated[float, Field(ge=1.0, le=4.0)] = spec_field(
         default=1.4,
         produced_by=Stage.CONFIG,
+        learnable=True,
         description=(
             "Magnification at a dwell region in zoom mode. In crop mode it tightens the "
             "constant window beyond the aspect fit, and 1.0 is the honest default there — "
             "cropping 9:16 out of 16:9 already costs a 1.8x upscale."
         ),
     )
-    min_dwell_ms: Annotated[int, Field(ge=0)] = spec_field(default=600, produced_by=Stage.CONFIG)
-    min_gap_ms: Annotated[int, Field(ge=0)] = spec_field(default=1200, produced_by=Stage.CONFIG)
-    ease_ms: Annotated[int, Field(ge=0)] = spec_field(default=350, produced_by=Stage.CONFIG)
-    crop_lag_ms: Annotated[int, Field(ge=0)] = spec_field(default=250, produced_by=Stage.CONFIG)
+    min_dwell_ms: Annotated[int, Field(ge=0)] = spec_field(default=600, produced_by=Stage.CONFIG, learnable=True)
+    min_gap_ms: Annotated[int, Field(ge=0)] = spec_field(default=1200, produced_by=Stage.CONFIG, learnable=True)
+    ease_ms: Annotated[int, Field(ge=0)] = spec_field(default=350, produced_by=Stage.CONFIG, learnable=True)
+    crop_lag_ms: Annotated[int, Field(ge=0)] = spec_field(default=250, produced_by=Stage.CONFIG, learnable=True)
     max_crop_delta_per_frame: Annotated[float, Field(gt=0.0, le=1.0)] = spec_field(
         default=0.012,
         produced_by=Stage.CONFIG,
+        learnable=True,
         description="Normalized crop movement ceiling. Judder is *the* failure mode of automated reframing (§9.1).",
     )
 
@@ -172,6 +196,7 @@ class RenderProfile(SpecModel):
     fps: Annotated[float, Field(gt=0.0)] = spec_field(default=30.0, produced_by=Stage.CONFIG)
     duration_budget: PositiveSeconds = spec_field(
         produced_by=Stage.CONFIG,
+        learnable=True,
         description=(
             "Seconds this profile is willing to run. Decides how aggressively it cuts, and it is "
             "one scalar rather than a cut list — which is what makes cuts aspect-agnostic (§4.4.1) "

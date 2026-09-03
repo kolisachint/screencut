@@ -16,6 +16,7 @@ from prefs import resolve_profile
 from spec.corrections import CorrectionDiff, Corrections, PROPOSED_NAME, diff_specs
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
+from spec.origin import learnable_paths
 from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
 
 from runner import db
@@ -84,6 +85,10 @@ class JobView:
             "diff": self.diff.model_dump(mode="json"),
             "reports": {name: r.model_dump(mode="json") for name, r in self.reports.items()},
             "renders": sorted(self.renders),
+            # Which tunables a person may correct, read off the schema (§10) and
+            # sent rather than listed in the page: a second copy in JavaScript is
+            # the one that goes stale, and it goes stale silently.
+            "tunables": learnable_paths(RenderProfile),
             "decision": self.decision,
         }
 
@@ -176,9 +181,13 @@ def decide(
 ) -> JobView:
     """Accept or reject, and record what was decided about which difference (§8).
 
-    An accepted spec is stored per profile because preferences are learned per
-    profile (§5.4) — the document is the same, the budget it was accepted under is
-    not, and that budget is exactly what §10 reads back.
+    An accepted spec is stored per profile *with that profile*, because preferences
+    are learned per profile (§5.4) and every tunable §10 moves — the budget, the
+    §4.3 focus numbers, caption geometry — lives on the `RenderProfile` rather than
+    in the `EditSpec`. Storing the name alone would record the document and drop
+    the settings, and re-resolving the name later is worse than not having it: once
+    the learner writes a default, `resolve_profile` returns the learner's own last
+    move, so the corpus would read that back as a preference a person expressed.
     """
     if decision not in DECISIONS:
         raise ValueError(f"decision must be one of {DECISIONS}, not {decision!r}")
@@ -197,6 +206,7 @@ def decide(
                     job_id=job_id,
                     profile=profile.name,
                     spec_json=view.spec.model_dump_json(),
+                    profile_json=profile.model_dump_json(),
                 )
     return load_job(job_id, db_path)
 

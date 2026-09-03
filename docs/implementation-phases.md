@@ -3,11 +3,13 @@
 Companion to [`architecture.md`](architecture.md), which holds the design and the
 reasoning. This document holds only the order of work and what "done" means at each step.
 
-Phase 0 has been run and phases 1 to 6 are built. Three phases carry a caveat rather than
-a clean finish: phase 4 has no real take, phase 5 has never called a model, and phase 6's
-transcript round-trip has never met speech — all three because of what is not installed on
-the machine this was built on. Each section says so and marks which of its exit criteria
-that leaves open. Its measured results are in [`environment-findings.md`](environment-findings.md), and
+Phase 0 has been run and phases 1 to 9 are built; phase 10 has its corpus and not its
+learner. Four phases carry a caveat rather than a clean finish: phase 4 has no real take,
+phase 5 has never called a model, phase 6's transcript round-trip has never met speech, and
+phase 10 is waiting on ten to fifteen accepted real jobs — the first three because of what
+is not installed on the machine this was built on, the fourth because the jobs have to be
+made rather than installed. Each section says so and marks which of its exit criteria that
+leaves open. Its measured results are in [`environment-findings.md`](environment-findings.md), and
 phases 4, 5 and 8 should be read alongside it. Phases
 are sized to be picked up cold: each states its goal, what gets built, how you know it is
 finished, and what is deliberately excluded.
@@ -982,12 +984,18 @@ moves numbers rather than code.
 
 ---
 
-## Phase 10 — Preference learner
+## Phase 10 — Preference learner — **corpus built, learner blocked on a corpus**
 
 **Goal:** close the loop.
 
 Requires ~10–15 accepted real jobs in `accepted_specs`. If they do not exist yet, this
 phase is not ready — go and make videos instead.
+
+There are none, so the learner is not built. What has been built is the half that
+**cannot wait for them**, because it is the half that has to be recording while the
+videos are being made: what was accepted, what it was accepted *under*, and whether it
+was real. `make corpus` reports how far off the gate is. See *The corpus, ahead of the
+learner* below.
 
 **Build**
 
@@ -1009,8 +1017,67 @@ phase is not ready — go and make videos instead.
 - Shortening `shorts_9x16` by hand across several jobs proposes a lower `duration_budget`
   for that profile and leaves `demo_16x9` untouched. Per-profile learning is the reason
   §4.1 has two layers, and the budget is where it pays off most visibly.
-- A job that failed verification contributes nothing.
-- Reverting a preference change restores prior planning behaviour exactly.
+- A job that failed verification contributes nothing. — **met, in the corpus rather than
+  in the learner.** `prefs/corpus.py` applies §10.1's rule at the read, and
+  `tests/test_corpus.py` asserts a failed job, a synthetic one and a row with no profile
+  each contribute nothing and each say so.
+- Reverting a preference change restores prior planning behaviour exactly. — **open.**
+  Nothing writes a preference change yet.
+
+### The corpus, ahead of the learner
+
+§10.2 is right that a learner built before there is anything to learn from is dead code
+that still has to be debugged, and that is why the statistics, `defaults.json` and
+exemplar retrieval are absent. But reading phase 10 against what phase 7 actually records
+found that **the corpus it will read could not answer either of its first two exit
+criteria**, for three independent reasons — and every one of them is a *recording* fault,
+which is the kind that cannot be fixed afterwards. "Go and make videos instead" is a
+one-way door: fifteen jobs reviewed under the old schema would have produced a corpus
+nothing could repair, and the only remedy then is to review all fifteen again.
+
+So this much is built, and it is deliberately not the learner:
+
+- **`accepted_specs` now records the whole profile, not its name** (migration 0004). Every
+  tunable §10 moves — `duration_budget`, the §4.3 focus numbers, caption geometry — is a
+  `RenderProfile` field and none of them is in the `EditSpec`, so the row recorded what was
+  accepted and dropped what it was accepted under. Re-resolving the name later is worse
+  than not having it: after the learner's first move `resolve_profile` returns the
+  learner's own output, and the corpus would read that back as a preference a person
+  expressed. That is §10.1's changelog failure and a feedback loop in one.
+- **A correction can address any learnable tunable**, not only the budget
+  (`spec/corrections.py`). Exit criterion 1 is a zoom factor corrected the same way across
+  several jobs, and `Corrections` had no way to express one — so no amount of real
+  reviewing would ever have produced that signal. Which tunables those are is
+  `learnable=True` on the field (`spec/profiles.py`), read off the schema by the layer, by
+  the diff and by the review page alike, because a list of learnable tunables kept beside
+  the code is the copy that goes stale.
+- **A take records whether it was recorded or generated** (`source.provenance`, spec v3).
+  §10.2 counts *real* jobs, and `ingest/cap_fixture.py` writes a bundle in Cap's own format
+  that the real adapter reads — by `accepted_specs` the two are the same document. A corpus
+  that counted fixtures would learn the fixture's taste and report it as yours.
+
+`prefs/corpus.py` is where the three meet: it applies §10.1's and §10.2's rules as filters,
+counts what each one dropped, and `make corpus` prints how many jobs are still needed. Same
+shape as risk R5's meter one phase earlier — say "not yet, by this much" rather than print a
+zero that reads like a measurement.
+
+**How it came out.** Three findings, one shape. Each was a place where a document recorded
+the *decision* and not the *conditions*, and each was invisible until something downstream
+tried to read it back — which is the same failure as the fingerprint that read too much and
+the exclusion that expired, one layer up. The general rule the phase leaves behind is that
+**a record is only as good as the question it will be asked**, and the time to check that
+is before the recording starts, not when the reading does.
+
+The second finding is the one that would have hurt most. It is easy to see that
+`accepted_specs` was missing a column; it is much harder to notice that a *signal* has no
+way of being expressed, because nothing fails — reviewers simply never produce it, and the
+learner arrives to find a corpus in which zoom factor was never corrected and concludes,
+correctly and uselessly, that nobody minds.
+
+The golden set caught the spec change on the first replay and named its stage
+(`source.provenance: 'unknown' -> 'synthetic' (ingest)`), which is exactly the strict half
+of §11.1 doing its job. `golden/demo_v1` is a recipe, so re-approving it was re-running the
+recipe rather than hand-editing an artifact.
 
 ---
 

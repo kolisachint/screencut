@@ -472,6 +472,16 @@
       "title": "Point",
       "type": "object"
     },
+    "Provenance": {
+      "description": "Where the footage came from, which is what makes \u00a710's gate answerable.\n\n\u00a710.2 activates the learner after ten to fifteen accepted *real* jobs, and\nwithout this field nothing can tell one from a fixture. Both look identical by\nthe time they reach `accepted_specs`: `ingest/cap_fixture.py` writes a bundle\nin Cap's own on-disk format and it is read by the same adapter a real\nrecording is. So the distinction has to be recorded at ingest \u2014 it cannot be\nrecovered later, and a corpus that counts fixtures would have the learner\nlearn synthetic taste and report it as yours.",
+      "enum": [
+        "recorded",
+        "synthetic",
+        "unknown"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
     "Removal": {
       "additionalProperties": false,
       "description": "A range that never survives, in any profile.\n\nExpressed as a range rather than as rewritten text, and that is what keeps\nthis an edit: audio and caption are cut at the same instants, from the same\ndecision, and nothing is put into your mouth that you did not say.",
@@ -651,6 +661,15 @@
             "stage": "ingest"
           }
         },
+        "provenance": {
+          "$ref": "#/$defs/Provenance",
+          "default": "unknown",
+          "description": "Whether this footage was recorded or generated (\u00a710.2).",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "ingest"
+          }
+        },
         "source_id": {
           "description": "Stable id of the take within the job.",
           "title": "Source Id",
@@ -821,7 +840,7 @@
       }
     },
     "spec_version": {
-      "default": 2,
+      "default": 3,
       "description": "Carried from the first commit (\u00a74.2). Load through `spec.migrations.load_spec`, never bare.",
       "title": "Spec Version",
       "type": "integer",

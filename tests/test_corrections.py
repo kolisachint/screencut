@@ -25,6 +25,11 @@ from spec.corrections import (
 )
 
 
+def tuned(overrides: dict[str, float]) -> Corrections:
+    """Corrections addressed to `shorts_9x16` and nothing else."""
+    return Corrections(profiles={"shorts_9x16": overrides})
+
+
 def source(duration: float = 10.0) -> Source:
     return Source(source_id="s", path="source/take.mp4", duration=duration, width=1920, height=1080, fps=30.0)
 
@@ -100,7 +105,7 @@ def test_re_tiering_moves_one_segment_and_leaves_its_reason_alone():
 
 def test_a_budget_correction_moves_the_budget_and_nothing_else():
     profile = resolve_profile("shorts_9x16")
-    corrected = Corrections(budgets={"shorts_9x16": 9.0}).apply_to_profile(profile)
+    corrected = tuned({"duration_budget": 9.0}).apply_to_profile(profile)
     assert corrected.duration_budget == 9.0
     assert corrected.model_dump(exclude={"duration_budget"}) == profile.model_dump(
         exclude={"duration_budget"}
@@ -111,7 +116,35 @@ def test_a_budget_for_another_profile_leaves_this_one_untouched():
     """Per-profile is the point: §4.1 has two layers so a shorter short does not
     shorten the demo."""
     profile = resolve_profile("demo_16x9")
-    assert Corrections(budgets={"shorts_9x16": 9.0}).apply_to_profile(profile) == profile
+    assert tuned({"duration_budget": 9.0}).apply_to_profile(profile) == profile
+
+
+def test_a_correction_can_move_any_learnable_tunable_not_only_the_budget():
+    """Phase 10's first exit criterion is a zoom factor corrected the same way
+    across several jobs, and a signal that cannot be expressed is never collected."""
+    profile = resolve_profile("shorts_9x16")
+    corrected = tuned({"focus.zoom_factor": 1.6, "captions.max_lines": 2}).apply_to_profile(profile)
+
+    assert corrected.focus.zoom_factor == 1.6
+    assert corrected.captions.max_lines == 2
+    assert corrected.duration_budget == profile.duration_budget
+
+
+def test_a_correction_addressed_to_a_field_that_is_not_a_preference_is_refused():
+    """`width` is a hard constraint (§10), not something a median may move. The
+    layer says so at the layer, so a typo fails while the person who made it is
+    still looking rather than one render later."""
+    with pytest.raises(ValidationError, match="not a learnable tunable"):
+        tuned({"width": 720})
+
+
+def test_a_correction_that_breaks_the_profiles_own_invariant_fails_at_the_correction():
+    """Round-tripped through `RenderProfile` rather than assigned, so a caption box
+    corrected outside the safe area is refused beside the correction that moved it
+    rather than at render time."""
+    profile = resolve_profile("shorts_9x16")
+    with pytest.raises(ValidationError, match="outside the safe area"):
+        tuned({"captions.box.y": 0.80}).apply_to_profile(profile)
 
 
 @pytest.mark.parametrize(
@@ -142,11 +175,13 @@ def test_corrections_survive_a_round_trip_through_the_job_directory(tmp_path):
     corrections = Corrections(
         reinstated=[ReinstatedRemoval(t_in=4.0, t_out=5.0)],
         retiered=[RetieredSegment(t_in=9.0, tier=Tier.ESSENTIAL)],
-        budgets={"shorts_9x16": 12.0},
+        profiles={"shorts_9x16": {"duration_budget": 12.0}},
     )
     corrections.write(tmp_path)
     assert Corrections.load(tmp_path) == corrections
-    assert json.loads((tmp_path / "corrections.json").read_text())["budgets"] == {"shorts_9x16": 12.0}
+    assert json.loads((tmp_path / "corrections.json").read_text())["profiles"] == {
+        "shorts_9x16": {"duration_budget": 12.0}
+    }
 
 
 def test_a_directory_with_no_corrections_reads_as_no_corrections(tmp_path):
@@ -178,7 +213,7 @@ def test_the_diff_names_the_tier_that_moved_with_both_ends_of_the_move():
 
 def test_the_diff_carries_the_budget_as_a_number_because_the_learner_takes_its_median():
     profile = resolve_profile("shorts_9x16")
-    corrected = Corrections(budgets={"shorts_9x16": 9.0}).apply_to_profile(profile)
+    corrected = tuned({"duration_budget": 9.0}).apply_to_profile(profile)
     spec = spec_with(PLAN)
     diff = diff_specs(spec, spec, [profile], [corrected])
 
@@ -187,13 +222,27 @@ def test_the_diff_carries_the_budget_as_a_number_because_the_learner_takes_its_m
     assert (change.before, change.after) == (profile.duration_budget, 9.0)
 
 
+def test_the_diff_names_every_tunable_that_moved_and_not_only_the_budget():
+    """§10 proposes a new default for each of them, and can only do that from a
+    record that carries each of them."""
+    profile = resolve_profile("shorts_9x16")
+    corrected = tuned({"focus.crop_lag_ms": 320, "captions.type_scale": 0.038}).apply_to_profile(profile)
+    spec = spec_with(PLAN)
+    diff = diff_specs(spec, spec, [profile], [corrected])
+
+    assert {c.path for c in diff.changes} == {
+        "profiles.shorts_9x16.captions.type_scale",
+        "profiles.shorts_9x16.focus.crop_lag_ms",
+    }
+
+
 def test_a_correction_that_changes_nothing_is_not_a_change():
     """The diff is derived from the documents rather than from the corrections
     that produced them, so it cannot claim an edit the render did not get."""
     profile = resolve_profile("shorts_9x16")
     corrections = Corrections(
         retiered=[RetieredSegment(t_in=0.0, tier=Tier.ESSENTIAL)],
-        budgets={"shorts_9x16": profile.duration_budget},
+        profiles={"shorts_9x16": {"duration_budget": profile.duration_budget}},
     )
     spec = spec_with(PLAN)
     diff = diff_specs(

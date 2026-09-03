@@ -26,7 +26,8 @@ from runner import db
 from runner.cli import main as cli_main
 from runner.pipeline import run_job
 from runner.stages import RECORDED_STAGES
-from spec import Encoder, Tier
+from spec import Encoder, RenderProfile, Tier
+from spec.origin import learnable_paths
 from spec.corrections import (
     PROPOSED_NAME,
     Corrections,
@@ -158,12 +159,31 @@ def test_a_tighter_budget_re_runs_no_planner_and_makes_a_shorter_video(reviewabl
     tiering was decided once, and the budget only says how much of it survives."""
     before = reviewable.duration()
 
-    view, run = reviewable.correct(Corrections(budgets={PROFILE: 2.5}))
+    view, run = reviewable.correct(Corrections(profiles={PROFILE: {"duration_budget": 2.5}}))
 
     assert planners_that_ran(run) == set(), run.ran()
     assert reviewable.agent.calls_for("EditPlan") == 1
     assert view.profiles[0].duration_budget == 2.5
     assert reviewable.duration() < before - 1.0
+
+
+def test_a_focus_tunable_correction_re_runs_plan_focus_and_no_other_planner(reviewable):
+    """§8's cost claim restated for the tunables the budget used to be alone among.
+
+    A budget correction re-runs no planner because §4.4.1 makes tiering aspect- and
+    budget-independent. A focus tunable is the other case and honestly so:
+    `plan_focus` fingerprints the *resolved* profile's focus block, so correcting
+    `crop_lag_ms` invalidates exactly that stage and nothing that decided a cut. The
+    failure this rules out is the opposite one — a fingerprint that read the
+    built-in profile would leave the correction cached away, which is the shape §8
+    says kills the loop."""
+    view, run = reviewable.correct(
+        Corrections(profiles={PROFILE: {"focus.crop_lag_ms": 900}})
+    )
+
+    assert planners_that_ran(run) == {"plan_focus"}, run.ran()
+    assert reviewable.agent.calls_for("EditPlan") == 1, "no cut was re-decided"
+    assert view.profiles[0].focus.crop_lag_ms == 900
 
 
 def test_a_correction_survives_the_planners_running_again_from_their_cache(reviewable):
@@ -199,7 +219,7 @@ def test_accepting_records_the_spec_per_profile_and_the_diff_that_produced_it(re
     reviewable.correct(
         Corrections(
             reinstated=[ReinstatedRemoval(t_in=2.0, t_out=3.0)],
-            budgets={PROFILE: 30.0},
+            profiles={PROFILE: {"duration_budget": 30.0}},
         )
     )
 
@@ -214,6 +234,35 @@ def test_accepting_records_the_spec_per_profile_and_the_diff_that_produced_it(re
 
     paths = {change["path"] for change in json.loads(review["diff_json"])["changes"]}
     assert paths == {"edit.removals[2.000-3.000]", f"profiles.{PROFILE}.duration_budget"}
+
+
+def test_accepting_records_the_profile_the_spec_was_accepted_under(reviewable):
+    """§10 learns `duration_budget`, the §4.3 focus tunables and caption geometry,
+    and every one of them is a `RenderProfile` field rather than an `EditSpec` one.
+    A row carrying the profile's *name* records what was accepted and not what it
+    was accepted under, and that half cannot be reconstructed later: re-resolving
+    the name reads today's defaults, which after the learner's first move are the
+    learner's own output."""
+    reviewable.correct(Corrections(profiles={PROFILE: {"duration_budget": 30.0}}))
+    service.decide(reviewable.job_id, service.ACCEPTED, db_path=reviewable.db_path)
+
+    with db.connect(reviewable.db_path) as connection:
+        accepted = db.accepted_specs(connection, PROFILE)
+
+    assert len(accepted) == 1
+    snapshot = RenderProfile.model_validate_json(accepted[0]["profile_json"])
+    assert snapshot.duration_budget == 30.0
+    assert resolve_profile(PROFILE).duration_budget != 30.0, "the built-in profile is untouched"
+
+
+def test_the_page_is_told_which_tunables_may_be_corrected(reviewable):
+    """Read off the schema and sent, rather than listed in the page: a second copy
+    in JavaScript is the one that goes stale, and it goes stale silently."""
+    payload = service.load_job(reviewable.job_id, reviewable.db_path).payload()
+
+    assert payload["tunables"] == learnable_paths(RenderProfile)
+    assert "focus.zoom_factor" in payload["tunables"]
+    assert "width" not in payload["tunables"]
 
 
 def test_rejecting_records_the_decision_and_no_accepted_spec(reviewable):
@@ -269,7 +318,7 @@ def test_the_correction_endpoint_says_what_ran_and_what_was_cached(client, revie
     on faith, so the response carries it."""
     response = client.post(
         f"/api/jobs/{reviewable.job_id}/corrections",
-        json={"reinstated": [{"t_in": 2.0, "t_out": 3.0}], "retiered": [], "budgets": {}},
+        json={"reinstated": [{"t_in": 2.0, "t_out": 3.0}], "retiered": [], "profiles": {}},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -288,7 +337,7 @@ def test_the_correction_endpoint_says_what_ran_and_what_was_cached(client, revie
 def test_a_correction_the_plan_no_longer_contains_is_refused_rather_than_dropped(client, reviewable):
     response = client.post(
         f"/api/jobs/{reviewable.job_id}/corrections",
-        json={"reinstated": [{"t_in": 99.0, "t_out": 99.5}], "retiered": [], "budgets": {}},
+        json={"reinstated": [{"t_in": 99.0, "t_out": 99.5}], "retiered": [], "profiles": {}},
     )
     assert response.status_code == 409
     assert "not in the current plan" in response.json()["detail"]
@@ -297,7 +346,7 @@ def test_a_correction_the_plan_no_longer_contains_is_refused_rather_than_dropped
 def test_a_correction_that_breaks_the_schema_never_reaches_the_pipeline(client, reviewable):
     response = client.post(
         f"/api/jobs/{reviewable.job_id}/corrections",
-        json={"reinstated": [], "retiered": [{"t_in": 5.0, "tier": "vital"}], "budgets": {}},
+        json={"reinstated": [], "retiered": [{"t_in": 5.0, "tier": "vital"}], "profiles": {}},
     )
     assert response.status_code == 422
 
@@ -328,7 +377,7 @@ def test_a_degraded_job_announces_itself_on_its_page(bundle, tmp_path, monkeypat
 def test_a_budget_correction_reaches_a_run_from_the_shell_too(reviewable):
     """The correction layer is the job's, not the page's. A `screencut run` that
     ignored it would render something the review page does not show."""
-    Corrections(budgets={PROFILE: 4.0}).write(reviewable.directory)
+    Corrections(profiles={PROFILE: {"duration_budget": 4.0}}).write(reviewable.directory)
 
     run = run_job(
         reviewable.directory, [PROFILE], db_path=reviewable.db_path, encoder=Encoder.SOFTWARE
