@@ -24,6 +24,7 @@ import pytest
 from ingest.cap_fixture import write_bundle
 from ingest.fixtures import DEFAULT_BEATS
 from plan.edit import (
+    INSTRUCTION,
     UNTIERED_REASON,
     EditPlan,
     ProposedRemoval,
@@ -151,7 +152,20 @@ def test_the_schema_in_the_prompt_is_the_one_that_validates_the_reply():
 
 
 def test_a_model_stage_is_keyed_on_its_model_and_prompt_version():
-    assert set(agent.cache_params()) == {"model", "prompt_version"}
+    params = agent.cache_params("anthropic/claude-sonnet-5", INSTRUCTION)
+    assert set(params) == {"model", "prompt_version"}
+
+
+def test_the_prompt_version_is_the_prompt_so_it_cannot_be_forgotten():
+    """Phase 9's five prompts are why this is derived rather than bumped by hand.
+
+    A hand-kept integer fails two ways once there is more than one prompt: forget
+    it and the cache serves last week's answer to this week's prompt, share it
+    and editing the overlay instruction re-runs `script_draft`."""
+    before = agent.cache_params("m", INSTRUCTION)
+    after = agent.cache_params("m", INSTRUCTION + "\n- And never cut on a laugh.")
+    assert before["prompt_version"] != after["prompt_version"]
+    assert agent.cache_params("m", INSTRUCTION) == before
 
 
 # --- reconciliation ----------------------------------------------------------
@@ -289,31 +303,34 @@ def test_an_unreachable_agent_still_produces_a_render(bundle, tmp_path, monkeypa
 @needs_ffmpeg
 def test_a_degraded_stage_is_not_cached_so_the_next_run_tries_again(bundle, tmp_path, fake_agent):
     """One lost network must not become permanent."""
-    fake_agent.replies({"exit": 1, "text": "no network"})
+    fake_agent.fragments(EditPlan={"exit": 1, "text": "no network"})
     job = _job(bundle, tmp_path, "retry")
     db = tmp_path / "db.sqlite"
 
     run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
-    assert fake_agent.calls == 1
+    assert fake_agent.calls_for("EditPlan") == 1
     run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
-    assert fake_agent.calls == 2
+    assert fake_agent.calls_for("EditPlan") == 2, "the stage that could not run is tried again"
 
 
 @needs_ffmpeg
 def test_re_running_an_unchanged_job_calls_no_model(bundle, tmp_path, fake_agent):
     """Phase 5's exit criterion. Phase 0 measured 6-66s per call, so if this is
     wrong every later phase is slow and expensive (§5.2)."""
-    fake_agent.replies({"text": f"```json\n{plan_json()}\n```"})
+    fake_agent.fragments(EditPlan={"text": f"```json\n{plan_json()}\n```"})
     job = _job(bundle, tmp_path, "cached")
     db = tmp_path / "db.sqlite"
 
     first = run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
     assert not first.degradations, first.degradations
-    assert fake_agent.calls == 1
+    assert fake_agent.calls_for("EditPlan") == 1
+    # Every model stage of the job, once each: the four job-level ones and one
+    # `metadata` per profile (§7.1). This is the number a second run must not move.
+    calls = fake_agent.calls
 
     again = run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
     assert again.did_no_work, again.ran()
-    assert fake_agent.calls == 1
+    assert fake_agent.calls == calls
 
 
 @needs_ffmpeg
@@ -322,7 +339,7 @@ def test_one_spec_renders_at_two_lengths_under_two_budgets_without_a_second_mode
 ):
     """Phase 5's exit criterion and §4.4.1's argument in one: tiering is decided
     once, and how much of it survives is arithmetic per profile."""
-    fake_agent.replies({"text": json.dumps({
+    fake_agent.fragments(EditPlan={"text": json.dumps({
         "removals": [],
         "segments": [
             {"t_in": 0.0, "t_out": 6.0, "tier": "essential", "reason": "the claim"},
@@ -337,7 +354,13 @@ def test_one_spec_renders_at_two_lengths_under_two_budgets_without_a_second_mode
 
     run_job(job, [generous], db_path=db, encoder=Encoder.SOFTWARE)
     run_job(job, [tight], db_path=db, encoder=Encoder.SOFTWARE)
-    assert fake_agent.calls == 1, "a shorter short must not cost a model call (§4.4.1)"
+    assert fake_agent.calls_for("EditPlan") == 1, (
+        "a shorter short must not cost a model call (§4.4.1)"
+    )
+    # `metadata` is the exception that proves the rule, and it is per profile on
+    # purpose: a 30s demo and an 8s cut of it are two posts, and the copy for one
+    # is not the copy for the other (`plan/metadata.py`).
+    assert fake_agent.calls_for("MetadataCopy") == 2
 
     from verify.probe import probe
 

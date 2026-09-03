@@ -17,7 +17,7 @@ anywhere in this design, and adding one would replace it rather than extend it.
 
 ## Status
 
-**Phases 1 to 8 are built.** The data model everything else is written against;
+**Phases 1 to 9 are built.** The data model everything else is written against;
 the compiler that turns it into video — `plan_focus`, the time projection, ASS
 captions, SVG overlays, an FFmpeg graph rendering one spec to two aspect ratios at
 two different lengths; the runner that makes re-running cheap; and verification
@@ -56,16 +56,31 @@ the edit cuts it like any other audio. Decision #20 is the boundary and the sche
 holds it: no reference recording, no synthesis. Phase 0 measured F5-TTS at 0.11x
 realtime here, so `tts` is also the first stage that can run on another machine.
 
+**Phase 9 finishes the model surface and starts measuring it.** Four more stages,
+each bounded by a schema rather than by instructions: `script_draft` turns a brief
+you wrote into lines you will read, `emphasis` picks the words that carry the
+weight, `plan_overlays` chooses a template, a point and a label out of a closed
+set, and the metadata sidecar writes the copy for the post beside each render.
+Every one degrades to something usable when the agent cannot be reached, so a job
+with no network still comes out cut, cleaned, captioned and described. Which model
+each stage runs on is a line of YAML (decision #13), and the cache key's prompt
+version is derived from the prompt so it cannot go stale. `make replay` replays the
+golden set and reports drift split by field origin: strict per-field on the
+deterministic three quarters of the spec, distributional over N runs on the parts a
+model wrote — and it records what fraction of replies the schemas rejected, which
+is the first meter on risk R5.
+
 **Four things have not happened yet, and all are about what is installed rather
 than what is written.** No *real* recording has been ingested — that needs a
 screen, a microphone and Cap on the machine doing the work — so the phase-2 focus
 tunables and `trim`'s thresholds have never met real footage. No model has run:
-`plan_edit` is exercised against a scripted stand-in, so whether its cuts are ones
-you would have made is still an open question. The transcript round-trip has
-never met speech: the mechanism runs end to end, but its two tolerances are
-guesses until a real recording moves them. And no voice has been synthesized — the
-narrated path runs against a stand-in for F5-TTS, which proves the plumbing and
-nothing about whether the result sounds like you.
+every model stage is exercised against a scripted stand-in, so whether its cuts are
+ones you would have made is still an open question, R5's meter has no reading, and
+the golden set's distributional half has a harness but no archived case to run it
+against. The transcript round-trip has never met speech: the mechanism runs end to
+end, but its two tolerances are guesses until a real recording moves them. And no
+voice has been synthesized — the narrated path runs against a stand-in for F5-TTS,
+which proves the plumbing and nothing about whether the result sounds like you.
 
 **Phase 0 has been run** on the target machine — a base-model M1 MacBook Air,
 8GB, fanless. Its four verdicts are in
@@ -83,8 +98,10 @@ numbers under `docs/measurements/` and the harness in `tools/`:
   wrapped in a code fence, and latency runs 6–66 s per call.
 
 Next is a real take and a real model call — record one, run it, look at the cuts in
-review, and retune — which is phase 5's stop-and-reassess gate, and now the loop for
-doing it exists.
+review, and retune — which is phase 5's stop-and-reassess gate, and now everything
+for doing it exists: the loop, the golden replay to check a retune against, and the
+sidecar that says what the post is called. Phase 10's learner wants ten to fifteen
+accepted jobs, so the next thing to build is not code.
 
 ## Quickstart
 
@@ -97,7 +114,8 @@ make narrate     # a script read in a cloned voice over a silent capture (§8)
                  # (needs F5-TTS as well as whisper-cli)
 make broken      # the deliberately bad fixture, so the checks are seen firing
 make review      # the review UI on http://127.0.0.1:8000 (§8)
-make check       # tests, generated-artifact drift, TypeScript typecheck
+make replay      # replay the golden set, report per-field spec drift (§11.1)
+make check       # tests, drift check, TypeScript typecheck, golden replay
 ```
 
 `make review` needs `pip install -e ".[review]"` — the server is optional, so a headless
@@ -131,15 +149,15 @@ list anywhere. That is [§4.4.1](docs/architecture.md) working.
 |---|---|
 | `spec/` | Pydantic models, field-origin metadata, migrations, JSON Schema and TypeScript emit |
 | `ingest/` | The recorder-event adapter and the synthetic fixture generators, narrated and not |
-| `plan/` | `plan_focus` — the crop path and the zoom regions, both deterministic |
+| `plan/` | The planners: `plan_focus` and `trim` deterministic; `plan_edit`, `script_draft`, `emphasis`, `plan_overlays` and the sidecar copy through the agent |
 | `synth/` | Open transcription, TTS, and forced alignment — §5.3's three ASR-shaped calls, kept apart |
 | `compile/` | The time projection, ASS captions, SVG overlay templates, the FFmpeg graph |
 | `prefs/` | `constraints.yaml`: the hand-written tier, layered sparsely over the profiles |
 | `runner/` | The stage contract, `LocalRunner` and `RemoteRunner`, the content-addressed cache, SQLite |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
-| `golden/` | The deliberately bad fixture, and the findings it must produce |
-| `schemas/` | Generated — six JSON Schemas and the TypeScript types. Regenerate with `make generated` |
+| `golden/` | The replay harness (§11.1), the archived cases, and the findings the bad fixture must produce |
+| `schemas/` | Generated — seven JSON Schemas and the TypeScript types. Regenerate with `make generated` |
 | `tests/` | The invariants, the round-trip, the migration, the graph, and real renders |
 
 Five things in the spec are load-bearing and easy to miss:

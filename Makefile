@@ -1,5 +1,5 @@
 # screencut — see docs/architecture.md and docs/implementation-phases.md.
-.PHONY: help install schema types generated check-generated typecheck test fixture run take narrate review broken check clean
+.PHONY: help install schema types generated check-generated typecheck test fixture run take narrate review broken replay check clean
 
 FIXTURE ?= data/fixtures/demo01
 NARRATED ?= data/fixtures/narrated01
@@ -50,11 +50,14 @@ narrate:  ## Script -> narrated, captioned video (§8 of the phases doc). Needs 
 review:  ## Serve the review UI (§8). ENCODER must match how the jobs were rendered.
 	python3 -m review.app --encoder $(ENCODER)
 
+replay:  ## Replay the golden set and report per-field spec drift (§11.1).
+	python3 -m golden.replay
+
 broken:  ## Run the deliberately bad fixture, so §9.1's checks are seen firing.
 	python3 -m ingest.fixtures --out data/fixtures/broken01 --job-id fixture --broken
 	-python3 -m runner.cli run data/fixtures/broken01 --encoder $(ENCODER)
 
-check: test check-generated typecheck  ## Everything CI would run.
+check: test check-generated typecheck replay  ## Everything CI would run.
 
 clean:
 	rm -rf .pytest_cache **/__pycache__ node_modules

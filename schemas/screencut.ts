@@ -333,11 +333,78 @@ export interface FocusTrack {
   points: FocusPoint[];
 }
 
+/**
+ * One sidecar, for one render of one profile.
+ */
+export interface Metadata {
+  /**
+   * @producedBy system (deterministic)
+   */
+  job_id: string;
+  /**
+   * @producedBy system (deterministic)
+   */
+  profile: string;
+  /**
+   * The file this describes, relative to the job directory.
+   *
+   * @producedBy system (deterministic)
+   */
+  render: string;
+  /**
+   * The render's length as the compiler projected it — measured, never reported.
+   *
+   * @producedBy system (deterministic)
+   */
+  duration_s: number;
+  /**
+   * The copy itself. Named for the post rather than `copy`, which shadows a Pydantic
+   * method.
+   *
+   * @producedBy metadata (model)
+   */
+  post: MetadataCopy;
+  /**
+   * True when the copy is §7.4's script-derived fallback rather than the model's.
+   *
+   * @producedBy system (deterministic)
+   */
+  degraded: boolean;
+}
+
+/**
+ * The §7.2 fragment. Small and bounded, so most wrong answers are invalid answers
+ * rather than plausible ones (risk R5).
+ */
+export interface MetadataCopy {
+  /**
+   * @producedBy metadata (model)
+   */
+  title: string;
+  /**
+   * @producedBy metadata (model)
+   */
+  description: string;
+  /**
+   * Bare words, no leading '#'. Normalized by plan/metadata.py rather than trusted.
+   *
+   * @producedBy metadata (model)
+   */
+  tags: string[];
+}
+
 export interface Narration {
   /**
    * @producedBy config (deterministic)
    */
   source: NarrationSource;
+  /**
+   * What the video should say, in your words. `script_draft` turns it into lines to
+   * read.
+   *
+   * @producedBy human (deterministic)
+   */
+  brief: string | null;
   /**
    * Supplied or AI-drafted (decision #8). Null when narration is whatever you said on
    * the take.
@@ -710,4 +777,4 @@ export interface Word {
 }
 
 /** Documents and fragments that are emitted as standalone schemas. */
-export type SpecDocument = CorrectionDiff | Corrections | EditDecisions | EditSpec | OverlayPlan | RenderProfile;
+export type SpecDocument = CorrectionDiff | Corrections | EditDecisions | EditSpec | Metadata | OverlayPlan | RenderProfile;

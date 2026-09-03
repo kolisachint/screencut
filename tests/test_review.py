@@ -67,7 +67,7 @@ def bundle(tmp_path_factory):
 @pytest.fixture
 def reviewable(bundle, tmp_path, fake_agent):
     """An ingested job that has been rendered once, with every planner cached."""
-    fake_agent.replies({"text": f"```json\n{json.dumps(PLAN)}\n```"})
+    fake_agent.fragments(EditPlan={"text": f"```json\n{json.dumps(PLAN)}\n```"})
     job = tmp_path / "take"
     cli_main(["ingest", str(bundle), "--out", str(job)])
     spec = json.loads((job / "spec.json").read_text())
@@ -77,7 +77,10 @@ def reviewable(bundle, tmp_path, fake_agent):
     database = tmp_path / "screencut.db"
     run = run_job(job, [PROFILE], db_path=database, encoder=Encoder.SOFTWARE)
     assert not run.degradations, run.degradations
-    assert fake_agent.calls == 1
+    # Every model stage of the recorded recipe, once: `emphasis`, `plan_edit`,
+    # `plan_overlays`, and one `metadata` for the single profile (§7.1).
+    assert fake_agent.calls_for("EditPlan") == 1
+    planner_calls = fake_agent.calls
 
     class Job:
         directory = job
@@ -101,6 +104,13 @@ def reviewable(bundle, tmp_path, fake_agent):
 
 
 def planners_that_ran(run) -> set[str]:
+    """The stages that *decide* something, which is what a correction must not
+    re-run (§4.5, §8).
+
+    `metadata` is a model stage and is deliberately not in this set. It writes no
+    spec field and decides nothing — it describes the render, and a correction
+    that changes what a viewer hears makes that description stale by definition.
+    Rewriting it is the correction working, not the loop failing."""
     return {name.split("/")[-1] for name in run.ran()} & {*RECORDED_STAGES, "plan_focus"}
 
 
@@ -123,8 +133,14 @@ def test_reinstating_a_removal_re_runs_compile_and_render_and_no_planner_at_all(
         "render",
         "verify_transcript",
         "verify",
+        # The words this render says just changed, so the copy about them is
+        # stale (`plan/metadata.py`). Serving the old sidecar would be §5.2's
+        # silent bug in the one place it is visible to a reader.
+        "metadata",
     }
-    assert reviewable.agent.calls == 1, "a reinstated cut must not cost a model call"
+    assert reviewable.agent.calls_for("EditPlan") == 1, (
+        "a reinstated cut must not cost an editorial model call"
+    )
     assert view.spec.edit.removals == []
     assert reviewable.duration() > before + 0.5, "the correction has to reach the video"
 
@@ -145,7 +161,7 @@ def test_a_tighter_budget_re_runs_no_planner_and_makes_a_shorter_video(reviewabl
     view, run = reviewable.correct(Corrections(budgets={PROFILE: 2.5}))
 
     assert planners_that_ran(run) == set(), run.ran()
-    assert reviewable.agent.calls == 1
+    assert reviewable.agent.calls_for("EditPlan") == 1
     assert view.profiles[0].duration_budget == 2.5
     assert reviewable.duration() < before - 1.0
 
@@ -262,6 +278,7 @@ def test_the_correction_endpoint_says_what_ran_and_what_was_cached(client, revie
         "render",
         "verify_transcript",
         "verify",
+        "metadata",  # the copy, because what this render says has changed
     }
     assert set(RECORDED_STAGES) <= {name.split("/")[-1] for name in body["cached"]}
     assert body["spec"]["edit"]["removals"] == []

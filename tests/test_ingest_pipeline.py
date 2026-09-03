@@ -58,7 +58,9 @@ def test_ingest_writes_a_job_the_pipeline_can_run(bundle, tmp_path):
     assert spec.job_id == "job01"
     assert spec.focus.points, "the whole point of ingest is the focus track"
     assert (job / spec.source.path).is_file(), "the take is copied in; a job must survive being moved"
-    assert JobConfig.load(job).stages == ["transcribe", "plan_captions", "trim", "plan_edit"]
+    assert JobConfig.load(job).stages == list(RECORDED_STAGES), (
+        "the recipe, named once in runner/stages.py rather than copied here"
+    )
 
 
 @needs_ffmpeg
@@ -163,7 +165,17 @@ def test_re_running_an_ingested_job_repeats_only_what_degraded(bundle, tmp_path)
 
     run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
     again = run_job(job, db_path=db, encoder=Encoder.SOFTWARE)
-    assert again.ran() == ["job/plan_edit"], again.ran()
+    assert again.ran() == [
+        # Every model stage, and only the model stages. Phase 9 made that four
+        # job-level ones plus one `metadata` per profile; without an agent on
+        # this machine each degrades, and a degraded artifact is deliberately not
+        # cached. Everything deterministic is a clean hit.
+        "job/emphasis",
+        "job/plan_edit",
+        "job/plan_overlays",
+        "shorts_9x16/metadata",
+        "demo_16x9/metadata",
+    ], again.ran()
 
 
 @needs_ffmpeg

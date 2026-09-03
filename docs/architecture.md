@@ -1,19 +1,22 @@
 # screencut — Design & Architecture
 
-Status: phases 1 to 8 built — the spec (`spec/`), the Cap adapter and fixture generators
+Status: phases 1 to 9 built — the spec (`spec/`), the Cap adapter and fixture generators
 (`ingest/`), the deterministic planners `plan_focus`, `plan_captions` and `trim` plus the
-model stage `plan_edit` (`plan/`), open transcription, synthesis and forced alignment
-(`synth/`), the FFmpeg compiler (`compile/`), verification through §9.2 (`verify/`), the
-runner, cache, agent adapter, remote runner and job record (`runner/`), and the review UI
-(`review/`). `screencut ingest <take>.cap --out <job>` turns a recorder bundle into a job;
-`screencut narrate <job>` attaches a script and a voice reference to one; `screencut run
-<job>` renders it to every profile, skips whatever the cache already holds, verifies each
-render, and — on a job with a transcript — diffs the rendered audio against what the edit
-says should be there. `screencut-review` serves the correction loop over the result. Four
-things the design leans on have still not happened, all for want of what is installed on
-the machine this was built on: no *real* recording has been ingested, no model has run
-(`plan_edit` has only ever taken §7.4's degradation path or a scripted stand-in), §9.2 has
-never round-tripped speech, and no voice has been synthesized. See
+model stages `script_draft`, `plan_edit`, `emphasis`, `plan_overlays` and the metadata
+sidecar (`plan/`), open transcription, synthesis and forced alignment (`synth/`), the
+FFmpeg compiler (`compile/`), verification through §9.2 (`verify/`), the runner, cache,
+agent adapter, remote runner and job record (`runner/`), the review UI (`review/`) and the
+golden-set replay harness (`golden/`). `screencut ingest <take>.cap --out <job>` turns a
+recorder bundle into a job; `screencut narrate <job>` attaches a script and a voice
+reference to one; `screencut run <job>` renders it to every profile, skips whatever the
+cache already holds, verifies each render, diffs the rendered audio against what the edit
+says should be there on a job with a transcript, and writes a metadata sidecar beside each
+render. `screencut-review` serves the correction loop over the result; `make replay`
+replays the golden set and reports per-field drift. Four things the design leans on have
+still not happened, all for want of what is installed on the machine this was built on: no
+*real* recording has been ingested, **no model has run** (every model stage has only ever
+taken §7.4's degradation path or a scripted stand-in, so risk R5 has a meter and no
+reading), §9.2 has never round-tripped speech, and no voice has been synthesized. See
 [`implementation-phases.md`](implementation-phases.md) for what is built and what is next.
 
 ## 1. What this is
@@ -538,7 +541,17 @@ One definition still does four jobs — it constrains what the prompt asks for, 
 what comes back, generates the review UI's TypeScript types, and defines what the learner
 diffs.
 
-**A fragment is intent, not the finished document.** `plan_edit` returns removals and
+**A fragment is intent, not the finished document.** This started as `plan_edit`'s
+special case and turned out to be the general rule: **a fragment's schema cannot see the
+document the fragment will join, so it is never the last word on validity.** `OverlayPlan`
+makes the point most sharply — an overlay running from 55s to 61s is a well-formed
+`OverlayIntent` and an invalid `EditSpec`, because only the spec knows the source is 60
+seconds long. A stage that returned it would *succeed* and kill the job at apply time,
+which §7.4 forbids. So every model stage writing into `EditSpec` ends in a `reconcile`:
+clamp what is out of range, drop what is degenerate, derive what is arithmetic, and let
+the model decide only what taste decides.
+
+`plan_edit` returns removals and
 tiered segments as ranges it cares about; `EditDecisions`'s totality (§4.4) is then derived
 from them deterministically — removals win, segments are clipped to what is left, and
 anything untiered stays `essential`. Asking a language model to land a gapless,
@@ -577,6 +590,18 @@ neither, and the invocation has to enforce that rather than request it:
 This is a narrower thing than the agent is capable of, deliberately. The agent's full
 range is for *building* screencut, which is a different activity from *running* it.
 
+**Model and timeout are per stage, not per pipeline.** §7.1's surfaces differ in how much
+thinking they deserve — picking a template and a point out of a closed set is not writing
+the words you will perform — and under decision #13 that difference is a line of YAML
+rather than a code change. `prefs/constraints.yaml` carries one default plus sparse
+overrides, the same shape as its profile overrides and for the same reason.
+
+**The prompt version in §5.2's cache key is derived from the prompt.** Phase 5 spelled it
+as an integer to bump by hand, which works while there is one prompt and fails in two
+directions once there are five: forget the bump and the cache serves the old answer to the
+new prompt, share the integer across stages and editing one prompt re-runs the others. It
+is a hash of the instruction text, so it cannot be forgotten and cannot be shared.
+
 ### 7.4 Failure handling
 
 An LLM stage failure must not fail the job. Each degrades to a deterministic default and
@@ -608,6 +633,12 @@ network, and every later run returns the degraded edit with the network back up 
 nothing to indicate why. The artifact file is still written, so the job finishes; the
 missing `stage_cache` row is what makes the next run try the model again.
 
+The corollary is worth stating because it looks like a bug: **on a machine with no agent, a
+job never reaches "nothing to do".** Every model stage degrades on every run, so every run
+re-attempts them. That is the rule working — install the agent and the next run must use
+it — and it is why the cache tests script an agent rather than asserting a cache hit over a
+pipeline where no model stage could run at all.
+
 The degradations are chosen so that a fully-degraded job still renders: the full take, the
 verbatim transcript, plain captions, no overlays. That is a worse video, not a failed one,
 and it is reviewable — which matters under decision #12, where degradation is discovered
@@ -634,6 +665,15 @@ invalidated stages, and re-renders. **This design puts the entire burden on the 
 cache** — if a caption-position tweak re-synthesizes narration, the loop is unusable and
 the corrections that feed §10 stop happening. Cache correctness is a review-UI
 requirement, not an optimization.
+
+**What a correction costs, stated precisely.** No planner re-runs: the edit is not
+re-decided, which is §4.5's whole payoff and what makes a cut correction a re-render rather
+than a re-plan. One stage that *is* model-backed does re-run, and it should — the metadata
+sidecar (§7.1) describes what a viewer of this render hears, so a correction that changes
+what is said makes the copy about it stale. Serving the old sidecar would be §5.2's silent
+failure in the one place a person would actually read it. So the honest cost is one
+compile, one encode, and one model call per profile when the words changed; corrections
+that move a crop or a caption box cost no model call at all.
 
 ### 8.1 A correction is a layer, not an edit of the spec
 
@@ -794,10 +834,15 @@ Archived fixtures plus their approved `EditSpec`s, in `golden/`.
 
 Renders are slow, so regression compares **specs, not pixels**: replan each fixture and
 diff the proposed spec against the approved one. Render only two or three for frame
-hashing.
+hashing. `golden/replay.py` is the harness and it replans with the profile loop skipped
+entirely — the job-level stages run, the spec is written, nothing is encoded.
 
 Any change to prompts, rules, or learned defaults replays the full set before taking
 effect. Preference updates are code changes: versioned, diffable, revertable.
+
+A case is archived as a **recipe** when it can be — the synthetic fixture generator is
+deterministic and byte-stable, so committing its output next to the function that produces
+it would archive one thing twice. A real take has no recipe and is archived whole.
 
 ### 11.1 Two kinds of field, two kinds of check
 
@@ -823,6 +868,22 @@ just the uncertain part of it.
 
 Field origin is schema metadata rather than a lookup table maintained beside the code,
 because the two drift apart and the version that is wrong is always the table.
+
+The two halves compare different things, and the distributional one cannot be field by
+field. `tier` on segment 7 is not comparable between two runs that cut the take into
+different numbers of segments, and diffing them anyway produces a report whose *length* is
+the regression signal. What is comparable is the shape of the decision: how much survived,
+in how many pieces, how far the seams moved, how much furniture went on top. The median of
+those across N runs is checked against the approved value, not every run — one sample
+outside the band is what a distribution looks like; the middle having moved is what a
+regression looks like.
+
+Every tolerance in that half is currently a guess, stated per case with its provenance said
+out loud. None has met a real take, which is the same debt `SEAM_TOLERANCE_S` carries one
+section up — and the committed set cannot pay it down yet, because the one archived case is
+the synthetic fixture and it arrives with a complete spec, so no model stage runs against
+it. Until a real take is promoted, the distributional half is exercised against the scripted
+agent in the test suite: the harness is proved and the numbers are not.
 
 At least one fixture is **deliberately bad** — clipped audio, overlapping captions,
 juddering crop, a cut landing mid-word — so §9's checks are tested against known-bad
@@ -895,6 +956,16 @@ bounded by source duration mean most wrong answers are *invalid* answers, caught
 §7.2's validation or §9.1's checks. This is the real reason principle 2 forbids the model
 from emitting pixels or FFmpeg arguments: not that it would render badly, but that
 nothing downstream could tell.
+
+*Measurement:* every `StageResult` carries how many round trips the stage made and how many
+of those replies its schema rejected, and golden replay (§11) reports the rate across a
+run. Two things are deliberately excluded from the numerator. A **fenced** reply is not a
+violation — phase 0 saw eleven of twelve arrive inside a ```json fence, and counting them
+would put the rate an order of magnitude high and send the mitigation after the wrong
+thing. Neither is a timeout or a nonzero exit: those are the agent not answering, which
+says nothing about whether a schema survives contact with a model. With no agent installed
+the rate reports as *unmeasured* rather than as zero, because "could not run" and "ran and
+found nothing" are different states and only one of them is reassuring.
 
 ## 15. Open questions
 

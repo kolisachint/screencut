@@ -32,14 +32,14 @@ put it in the design first.
 |---|---|
 | `spec/` | The Pydantic models, field-origin metadata, migrations, JSON Schema + TypeScript emit |
 | `ingest/` | Recorder adapters (Cap), synthetic fixture generators — recorded and narrated |
-| `plan/` | Planners: `plan_focus`, `plan_captions`, `trim` deterministic; `plan_edit` the one model stage |
+| `plan/` | Planners: `plan_focus`, `plan_captions`, `trim` deterministic; `plan_edit`, `script_draft`, `emphasis`, `plan_overlays` and the sidecar copy through the agent. `context.py` is what they all put in a prompt |
 | `synth/` | §5.3's three calls, kept apart: `asr.py` open transcription, `tts.py` synthesis, `align.py` forced alignment |
 | `compile/` | Time projection, ASS captions, SVG overlays, the FFmpeg graph |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
 | `runner/` | Stage contract, `LocalRunner`, `RemoteRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
 | `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
 | `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles |
-| `golden/` | The deliberately bad fixture and the findings it must produce |
+| `golden/` | `replay.py` — §11.1's harness — plus the archived cases and the findings the bad fixture must produce |
 | `schemas/` | **Generated.** `make generated` rewrites them; `make check-generated` fails if they drift |
 | `data/` | Gitignored. Job directories and `screencut.db` |
 
@@ -55,7 +55,8 @@ make take        # a Cap-format take: bundle -> job -> both renders (needs ASR)
 make narrate     # a script read in a cloned voice over a silent capture (needs TTS + ASR)
 make broken      # the deliberately bad fixture, so §9.1's checks are seen firing
 make review      # the review UI over the jobs already rendered (§8)
-make check       # tests + generated-artifact drift + TypeScript typecheck
+make replay      # replay the golden set, report per-field spec drift (§11.1)
+make check       # tests + drift + TypeScript typecheck + golden replay
 ```
 
 `make review` serves the correction loop over whatever `make run` and `make take` have
@@ -83,9 +84,11 @@ runs locally, slowly, when there is none.
 An ingested job additionally wants two things `make run` and `make broken` do not.
 `transcribe` needs `whisper-cli` on `PATH` and `ggml-<model>.bin` under
 `prefs/constraints.yaml`'s `asr.models_dir`, and without them the job fails with a message
-saying exactly that. `plan_edit` needs `hoocode` on `PATH`, and without it the job does
-*not* fail — it degrades to `trim`'s edit and says so on the job record (§7.4), which is
-the whole point of that row.
+saying exactly that. Every model stage needs `hoocode` on `PATH`, and without it the job
+does *not* fail — `plan_edit` degrades to `trim`'s edit, `emphasis` to no markers,
+`plan_overlays` to no overlays, the sidecar to script-derived copy, and each says so on the
+job record (§7.4), which is the whole point of those rows. `script_draft` is the one
+exception and §7.4 says so: there is no script to fall back to, so the job halts.
 
 ## The target machine
 
@@ -113,10 +116,12 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | Every spec field records its producing stage | `spec/origin.py`; `tests/test_origin.py` fails the build without one |
 | `EditDecisions` is projected at compile, never baked into the spec | `compile/timeline.py` |
 | No model emits an FFmpeg argument or a pixel | principle 2; `compile/` is model-free |
-| A model stage's cache key includes model id + prompt version | `runner/cache.py` — refuses to key without them |
+| A model stage's cache key includes model id + prompt version | `runner/cache.py` — refuses to key without them; the version is a hash of the prompt (`runner/agent.py`), so it cannot be forgotten |
+| A model stage declares the prompt its key is derived from | `runner/stages.py` — `StageSpec` refuses `model_backed` without an instruction |
+| A fragment that writes into `EditSpec` is reconciled, never applied raw | `plan/edit.py`, `plan/overlays.py`; the fragment schema cannot see the document it joins |
 | One caption list serves every profile, sized to the tightest | `plan/captions.py`; wrapping stays in `compile/captions.py` |
 | Job-level stages run before the per-profile ones, never interleaved | `runner/pipeline.py` — they rewrite the spec the others fingerprint |
-| No `duration_budget` reaches a model; tiering is aspect-independent | `plan/edit.py`, §4.4.1; the fingerprint omits profiles too |
+| No `duration_budget` reaches a *planner*; tiering is aspect-independent | `plan/edit.py`, §4.4.1; the fingerprint omits profiles too. The metadata sidecar is per-profile on purpose and decides nothing about the edit |
 | A degraded artifact is never cached | `runner/pipeline.py` — caching it makes one lost network permanent |
 | Synthesis is of you: reference audio, its text and a script, or it does not validate | `spec/narration.py`; decision #20, and §1.1 says it is a schema matter rather than an intent one |
 | A stage reads the spec as the stages before it left it | `runner/pipeline.py` rebuilds the job context after every `apply`; otherwise a fingerprint keys on a document that has moved |
@@ -210,7 +215,37 @@ skipped.
 
 **Caching a fallback.** §7.4's degradation is what a stage produced *because it could not
 run*. Cache it and one lost network is permanent — every later run serves the degraded
-edit with the network back up and nothing saying why.
+edit with the network back up and nothing saying why. The corollary looks like a bug and
+is not: with no agent installed, a job never reaches "nothing to do", because every model
+stage degrades and re-attempts on every run. That is why the cache tests script an agent
+instead of asserting a hit over a pipeline where no model stage could have run.
+
+**A valid fragment that is an invalid document.** `OverlayPlan` validates in isolation, so
+an overlay from 55s to 61s is a well-formed `OverlayIntent` — and `EditSpec` rejects it,
+because only the spec knows the source is 60s long. The stage *succeeded* and the job died
+at apply time, which §7.4 forbids. A fragment's schema cannot see the document it will
+join, so it is never the last word on validity: every model stage writing into `EditSpec`
+ends in a `reconcile` that clamps, drops and derives.
+
+**One prompt version across five prompts.** A hand-bumped integer works with one prompt and
+fails two ways with five — forget it and the cache serves the old answer to the new prompt,
+share it and editing the overlay instruction re-runs `script_draft`. It is now a hash of the
+instruction text. Same family as the fingerprint that reads too much: a key is a claim about
+what a stage depends on, and a claim maintained by hand goes stale.
+
+**A validator that made its own producing stage unreachable.** Decision #20 required a
+synthesized narration to carry a script — and a job that needs `script_draft` has none yet,
+so the document that stage exists to complete was invalid until after it had run. A
+validator has to admit the state *before* each of its producers, not only the state after
+all of them. The relaxation then made a second guard necessary: `tts` could be reached with
+a null script and would have synthesized the empty string, which renders as a finished
+video with no narration.
+
+**Scripting a test double by call order when there is more than one caller.** The phase-5
+agent stand-in replied by call index. Phase 9 put five model stages in one job, so a test
+scripting one `EditPlan` handed it to `emphasis`, which runs earlier, and then failed on a
+degradation it never asked for. It now also scripts by fragment, keyed on the schema title
+in the prompt — the only part of a prompt that names its stage.
 
 **"Could not run" and "ran and found nothing" are different states.** `verify_transcript`
 wrote one flag for both, so a screen capture with the mic off — an ordinary job under §5.3
@@ -237,28 +272,35 @@ to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
 ## What is built, and what is blocked
 
-Phases 1–8 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
+Phases 1–9 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
 measured numbers, and everything phase 4 was waiting on is settled — Cap's cursor
 format, `whisper.cpp` as the ASR backend, and the memory budget per stage.
 
 **What is still missing is a real recording, a real model call and a real voice.** Phases
-4, 5 and 8 built the whole path and ran it against `ingest/cap_fixture.py` — a bundle in
+4, 5, 8 and 9 built the whole path and ran it against `ingest/cap_fixture.py` — a bundle in
 Cap's own on-disk format carrying every trap phase 0 measured — against a scripted agent,
 and against stand-ins for both speech backends. None is the same thing as the real one:
 
 - The phase-2 focus tunables have never met real cursor data. Expect to retune them, and
   expect that to be the first honest number `plan_captions`'s `PAUSE_S` gets too.
-- Nothing is in `golden/` but the broken fixture. Promoting a real take is phase 4's one
-  unfinished build item.
 - ASR has run against a test tone, not speech. The invocation, the parse and the stage are
   exercised end to end; recognition accuracy is not. §9.2's round-trip inherits that
   exactly — its happy path runs in CI against a `whisper-cli` stand-in, the same shape
   as phase 5's agent stand-in — but `SEAM_TOLERANCE_S` and `WER_CEILING` are guesses
   until a real recording moves them.
-- **No model has run.** `hoocode` is not installed here, so `plan_edit` has only ever
-  taken §7.4's degradation path or run against the scripted stand-in in
+- **No model has run.** `hoocode` is not installed here, so all five model stages —
+  `script_draft`, `plan_edit`, `emphasis`, `plan_overlays` and the metadata sidecar — have
+  only ever taken §7.4's degradation path or run against the scripted stand-in in
   `tests/conftest.py`. That stand-in tests our code end to end and tests nothing
-  about editorial taste, which is what phase 5's stop-and-reassess gate is for.
+  about editorial taste, which is what phase 5's stop-and-reassess gate is for. Risk R5
+  now has a meter (`StageResult.schema_violations`, reported by `make replay`) and no
+  reading, and it says "unmeasured" rather than 0% when nothing asked a model anything.
+- **The golden set's model half has a harness and no case.** `golden/demo_v1` is the
+  synthetic fixture, which arrives with a complete spec and runs no job-level stage, so
+  the strict half of §11.1 is exercised over a whole real `EditSpec` and the
+  distributional half is a baseline of zeroes. Every number in `Tolerances` is a guess.
+  Promoting a real take is phase 4's one unfinished build item and it fixes this and three
+  other things at once.
 - **No voice has been synthesized.** F5-TTS is not installed here, and per phase 0 it is
   not something to run on the target machine either — `runner/remote.py` exists for that
   reason. `synth/tts.py` is written against the invocation phase 0 measured, and every

@@ -9,6 +9,7 @@ code that still has to be debugged.
 from prefs.loader import (
     CONSTRAINTS_PATH,
     Constraints,
+    ResolvedAgent,
     load_constraints,
     resolve_profile,
     resolve_profiles,
@@ -17,6 +18,7 @@ from prefs.loader import (
 __all__ = [
     "CONSTRAINTS_PATH",
     "Constraints",
+    "ResolvedAgent",
     "load_constraints",
     "resolve_profile",
     "resolve_profiles",

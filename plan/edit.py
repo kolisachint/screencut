@@ -32,10 +32,22 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from plan.context import focus_summary, transcript_lines
 from spec.edit import EditDecisions, Removal, RemovalKind, Segment, Tier
-from spec.focus import FocusKind, FocusTrack
+from spec.focus import FocusTrack
 from spec.origin import Stage
 from spec.types import TIME_EPS
+
+__all__ = [
+    "EditPlan",
+    "INSTRUCTION",
+    "ProposedRemoval",
+    "ProposedSegment",
+    "UNTIERED_REASON",
+    "build_content",
+    "focus_summary",
+    "reconcile",
+]
 
 UNTIERED_REASON = "kept by default; plan_edit ranked no segment here"
 """A segment the model left unranked. `essential` is the safe direction — losing
@@ -97,32 +109,6 @@ Cover the parts you care about; anything you leave out is kept as essential.
 """
 
 
-def focus_summary(track: FocusTrack, *, bucket_s: float = 2.0) -> str:
-    """Where attention was, compressed enough to sit in a prompt.
-
-    The whole track is thousands of points and says nothing a model can use. What
-    it needs is the one thing `FocusTrack` knows that the transcript does not:
-    which stretches were a demonstration and which were a cursor drifting while
-    somebody talked. Clicks and dwell are that signal, so those are what is
-    summarized and movement is dropped.
-    """
-    if not track.points:
-        return "cursor: no track"
-    end = track.points[-1].t
-    lines: list[str] = []
-    start = 0.0
-    while start < end - TIME_EPS:
-        stop = min(start + bucket_s, end)
-        inside = [p for p in track.points if start <= p.t < stop]
-        clicks = sum(1 for p in inside if p.kind is FocusKind.CLICK)
-        dwell = sum(1 for p in inside if p.kind is FocusKind.DWELL)
-        if clicks or dwell:
-            share = dwell / len(inside) if inside else 0.0
-            lines.append(f"[{start:.1f}-{stop:.1f}] {clicks} clicks, {share:.0%} dwell")
-        start = stop
-    return "cursor activity by 2s bucket:\n" + ("\n".join(lines) or "  (no clicks or dwell)")
-
-
 def build_content(
     words: list,
     proposals: list[Removal],
@@ -144,9 +130,7 @@ def build_content(
     """
     lines = [f"Source duration: {duration:.2f}s", ""]
     lines.append("Transcript, [start-end] word:")
-    lines.append(
-        " ".join(f"[{w.t_in:.2f}-{w.t_out:.2f}] {w.text}" for w in words) or "  (no speech)"
-    )
+    lines.append(transcript_lines(words))
     lines.append("")
     lines.append("Removals already proposed by arithmetic (accept or reject each):")
     for removal in proposals:

@@ -55,6 +55,14 @@ class StageOutcome:
     coverage of 40% on an alignment is not a failure, and it is exactly what you
     want to see before wondering why the captions drift."""
 
+    agent_calls: int = 0
+    schema_violations: int = 0
+    """Round trips to the agent CLI, and how many of those replies the fragment
+    schema rejected (§7.2). Per outcome rather than per job because a replay wants
+    to know *which* schema is the one models struggle with — a rate over the whole
+    pipeline would average `plan_overlays` into `emphasis` and say nothing about
+    either. Zero on a cache hit, which is why §11's replay forces."""
+
     def __str__(self) -> str:
         state = "cached " if self.cached else "ran    "
         line = f"{state}{self.profile:>12} {self.stage:<17} {self.cache_key[:12]}"
@@ -75,9 +83,28 @@ class JobRun:
     answer (§7.4). Carried to the job record because under decision #12 the review
     page is the only place a degraded job announces itself."""
 
+    sidecars: dict[str, Path] = field(default_factory=dict)
+    """The metadata sidecar published beside each render (§5.4). The pipeline ends
+    at a file plus one of these (§1), so a job that produced no sidecar produced
+    half a deliverable — and this is where a caller finds out."""
+
     @property
     def verified(self) -> bool:
         return all(report.passed for report in self.reports.values())
+
+    @property
+    def agent_calls(self) -> int:
+        return sum(outcome.agent_calls for outcome in self.outcomes)
+
+    @property
+    def schema_violations(self) -> int:
+        """Replies rejected by a fragment schema across this run.
+
+        The first real measurement of risk R5, and the number that says whether
+        decision #13 was right: with no constrained decoding a schema is a strong
+        instruction rather than a guarantee (§7.2), and this is what that costs.
+        """
+        return sum(outcome.schema_violations for outcome in self.outcomes)
 
     @property
     def did_no_work(self) -> bool:
@@ -96,12 +123,21 @@ def run_job(
     runner: LocalRunner | None = None,
     remote_runner: Runner | None = None,
     force: bool = False,
+    plan_only: bool = False,
 ) -> JobRun:
     """`remote_runner`, when given, takes the stages that asked for it.
 
     Phase 0 made that concrete rather than hypothetical: `tts` is 0.11x realtime
     on this machine (environment findings §4), so it is the one stage whose
-    `prefers_remote` is set. Everything else stays where the media is."""
+    `prefers_remote` is set. Everything else stays where the media is.
+
+    `plan_only` stops after the job-level stages, with the spec written and no
+    profile rendered. That is §11's shape rather than a convenience: golden replay
+    compares **specs, not pixels**, because renders are slow and a replay that
+    encoded every fixture would be run once and then never again. The profiles are
+    still resolved and still reach the planners that are profile-aware — dropping
+    them would change what `plan_captions` sizes its blocks against, and then the
+    replay would be checking a spec the pipeline never produces."""
     job_dir = Path(job_dir)
     # Read before anything runs, applied after everything job-level has: a
     # correction is a layer over the planners' spec, not an edit of it
@@ -143,7 +179,7 @@ def run_job(
             constraints, corrections,
         )
         run.profiles = list(resolved)
-        for profile in resolved:
+        for profile in resolved if not plan_only else ():
             _run_profile(
                 run, connection, spec, profile, job_dir, runner, encoder, force,
                 constraints, job_paths, job_keys,
@@ -153,7 +189,16 @@ def run_job(
             job_id=spec.job_id,
             job_dir=str(job_dir),
             spec_version=spec.spec_version,
-            status="rendered" if run.verified else "failed_verification",
+            # A plan-only run has rendered nothing and verified nothing, so it must
+            # not claim either. "replanned" is its own status rather than a reused
+            # one: a golden replay leaving twenty jobs marked `rendered` with no
+            # file behind them would be the database disagreeing with the disk,
+            # which §5.4 keeps apart precisely so it cannot.
+            status=(
+                "replanned" if plan_only
+                else "rendered" if run.verified
+                else "failed_verification"
+            ),
             degradations=run.degradations,
         )
     return run
@@ -206,7 +251,13 @@ def _run_job_stages(
         # must carry the model id and prompt version, or the cache serves the old
         # answer after exactly the change you were evaluating. `cache_key` refuses
         # to compute one without them; this is where they come from.
-        params = agent.cache_params(context.constraints.agent.model) if stage.model_backed else {}
+        # Per stage, not per pipeline (§7.1's surfaces differ in how much thinking
+        # they deserve), and the prompt version is derived from the instruction so
+        # it cannot go stale (`runner/agent.py`).
+        agent_config = context.constraints.agent.for_stage(name)
+        params = (
+            agent.cache_params(agent_config.model, stage.instruction) if stage.model_backed else {}
+        )
         key = cache_key(
             stage=stage.name,
             stage_version=stage.version,
@@ -237,7 +288,7 @@ def _run_job_stages(
                     "asr": context.constraints.asr.model_dump(mode="json"),
                     "tts": context.constraints.tts.model_dump(mode="json"),
                     "trim": context.constraints.trim.model_dump(mode="json"),
-                    "model": context.constraints.agent.model,
+                    "agent": agent_config.model_dump(mode="json"),
                     "profiles": [p.model_dump(mode="json") for p in profiles],
                 },
                 output=str(artifact),
@@ -266,6 +317,8 @@ def _run_job_stages(
             StageOutcome(
                 stage=name, profile="job", cache_key=key, path=str(artifact), cached=cached,
                 note=None if cached else result.note,
+                agent_calls=0 if cached else result.agent_calls,
+                schema_violations=0 if cached else result.schema_violations,
             )
         )
         if stage.apply is not None:
@@ -363,6 +416,12 @@ def _run_profile(
         # A stage's inputs include its upstream stages' keys, which is how bumping
         # one stage_version invalidates that stage and its dependents — and nothing
         # else, since a sibling's key is not in anybody's inputs.
+        # `metadata` is the one per-profile model stage (§7.1, plan/metadata.py),
+        # and it is why these params are no longer unconditionally empty: §5.2
+        # refuses to key a model stage without a model id and a prompt version,
+        # and it is right to — the alternative serves last week's copy after a
+        # model change and looks like the change did nothing.
+        agent_config = constraints.agent.for_stage(name)
         key = cache_key(
             stage=stage.name,
             stage_version=stage.version,
@@ -374,7 +433,11 @@ def _run_profile(
                     if dependency in keys
                 },
             },
-            params={},
+            params=(
+                agent.cache_params(agent_config.model, stage.instruction)
+                if stage.model_backed
+                else {}
+            ),
             model_backed=stage.model_backed,
         )
         keys[name] = key
@@ -407,6 +470,7 @@ def _run_profile(
                     "profile": profile.model_dump(mode="json"),
                     "encoder": context.encoder.value,
                     "asr": constraints.asr.model_dump(mode="json"),
+                    "agent": agent_config.model_dump(mode="json"),
                 },
                 output=str(artifact),
             )
@@ -430,10 +494,19 @@ def _run_profile(
             StageOutcome(
                 stage=name, profile=profile.name, cache_key=key, path=str(artifact),
                 cached=cached, note=None if cached else result.note,
+                agent_calls=0 if cached else result.agent_calls,
+                schema_violations=0 if cached else result.schema_violations,
             )
         )
 
     run.renders[profile.name] = _publish(job_dir, Path(paths["render"]), spec.job_id, profile.name)
+    # §1: the pipeline ends at a file plus a metadata sidecar. Published beside
+    # the render and under the same name, so the pair travels together — and
+    # published from the cache the same way, because the sidecar is as
+    # content-addressed as the mp4 is.
+    run.sidecars[profile.name] = _publish(
+        job_dir, Path(paths["metadata"]), spec.job_id, profile.name, suffix=".json"
+    )
     report = VerificationReport.model_validate_json((job_dir / paths["verify"]).read_text())
     run.reports[profile.name] = report
     db.record_verification(
@@ -460,14 +533,16 @@ def _is_cached(connection, key: str, path: Path, directory: bool) -> bool:
     return True
 
 
-def _publish(job_dir: Path, artifact: Path, job_id: str, profile: str) -> Path:
-    """Give the cached render a stable human-facing name.
+def _publish(
+    job_dir: Path, artifact: Path, job_id: str, profile: str, suffix: str = ".mp4"
+) -> Path:
+    """Give a cached artifact a stable human-facing name.
 
     A hard link rather than a copy: the cache is content-addressed and immutable,
     `renders/` is a view onto it, and 256GB (§16) is not enough to keep two of
     every render.
     """
-    destination = job_dir / "renders" / f"{job_id}_{profile}.mp4"
+    destination = job_dir / "renders" / f"{job_id}_{profile}{suffix}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     source = job_dir / artifact
     if destination.exists():

@@ -46,6 +46,9 @@ class Stage(str, Enum):
     EMPHASIS = "emphasis"
     PLAN_OVERLAYS = "plan_overlays"
     SCRIPT_DRAFT = "script_draft"
+    METADATA = "metadata"
+    """The sidecar's copy (§1.1: written language is in scope, and it never reaches a frame)."""
+
     AUDIO = "audio"
 
 
@@ -79,6 +82,7 @@ STAGE_ORIGIN: dict[Stage, Origin] = {
     Stage.EMPHASIS: Origin.MODEL,
     Stage.PLAN_OVERLAYS: Origin.MODEL,
     Stage.SCRIPT_DRAFT: Origin.MODEL,
+    Stage.METADATA: Origin.MODEL,
 }
 
 

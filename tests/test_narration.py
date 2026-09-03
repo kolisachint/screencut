@@ -31,7 +31,7 @@ import pytest
 from ingest.narrated_fixture import build_narrated_spec, write_narrated_fixture
 from prefs import load_constraints, resolve_profile
 from runner.pipeline import run_job
-from runner.stages import JOB_STAGES, SYNTHESIZED_STAGES
+from runner.stages import JOB_STAGES, RECORDED_STAGES, SYNTHESIZED_STAGES
 from spec import Encoder
 from spec.editspec import EditSpec
 from spec.migrations import load_spec_file
@@ -295,7 +295,7 @@ def narrated(tmp_path, tts_stand_in, whisper_stand_in, fake_agent, monkeypatch):
         "narrated-test", width=320, height=180, slot_s=2.0, script=SCRIPT
     )
     write_narrated_fixture(job, fixture)
-    fake_agent.replies({"text": f"```json\n{json.dumps(PLAN)}\n```"})
+    fake_agent.fragments(EditPlan={"text": f"```json\n{json.dumps(PLAN)}\n```"})
 
     constraints = load_constraints().model_copy(deep=True)
     constraints.asr.models_dir = str(tmp_path)
@@ -570,7 +570,7 @@ def test_a_narrated_job_asks_for_no_transcribe_and_a_recorded_one_for_no_tts():
     recorded it has nothing to synthesize, and a synthesized one has no recorded
     speech to transcribe."""
     assert "transcribe" not in SYNTHESIZED_STAGES
-    assert set(SYNTHESIZED_STAGES) - {"tts", "align"} == {"plan_captions", "trim", "plan_edit"}
+    assert set(SYNTHESIZED_STAGES) - {"tts", "align"} == set(RECORDED_STAGES) - {"transcribe"}
 
 
 def test_the_fixture_reads_over_a_capture_long_enough_to_hold_it():
