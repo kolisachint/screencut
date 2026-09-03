@@ -739,7 +739,7 @@ each left.
 
 ---
 
-## Phase 8 — Voice synthesis
+## Phase 8 — Voice synthesis — **built, less the real voice**
 
 **Goal:** narration from a script rather than from your microphone.
 
@@ -764,12 +764,96 @@ recorded input, not a default that can be quietly pointed at someone else.
 
 **Exit criteria**
 
-- Script in, narrated and captioned video out.
+- Script in, narrated and captioned video out. — **met**, against stand-ins for both
+  backends. `make narrate` generates a silent capture, a script and a voice reference and
+  runs the whole recipe; `tests/test_narration.py` runs the same path in CI and asserts the
+  captions are the script word for word and the render came out with an audio track on it.
 - Phase 6's transcript round-trip passes on synthesized narration — this is the check that
-  catches TTS mispronunciation, and it is the reason verification comes first.
+  catches TTS mispronunciation, and it is the reason verification comes first. — **met**,
+  and driven rather than merely observed: one test has the narration say "fitters" for
+  "filters" and asserts §9.2 reports it as a real difference rather than a seam.
 - `plan_edit`'s cleanup half no-ops on synthesized narration, which has no disfluencies to
   remove. If it starts cutting clean speech, that is a phase-5 prompt problem surfacing on
-  new input, and it is worth knowing before the learner starts averaging over it.
+  new input, and it is worth knowing before the learner starts averaging over it. — **met**,
+  in the form arithmetic can state: §4.6's proposal on a read script is empty, so there is
+  nothing for the model to review. The test asserts the empty proposal rather than the
+  model's restraint, because the model's restraint is not a thing a stand-in can show.
+
+**Not in this phase:** `script_draft` (phase 9 — the script is supplied here), kinetic
+captions, a network transport for `RemoteRunner`.
+
+**How it came out.** Three of the four build items came out close to the plan. The one that
+did not is `align`, and the reason is the standing rule about code written against output
+nobody has run.
+
+**`align` is not WhisperX, and that is deliberate.** §5.3 named it; phase 0 benchmarked
+three ASR backends and WhisperX was not among them. Writing a parser for its output would
+be the exact failure phase 0 exists to prevent, so alignment is done with the backend this
+repository has actually run: open-transcribe the narration with whisper.cpp, then anchor
+the script to what came back, interpolating the runs between anchors by word length. It is
+principle 3 applied to a stage the design had assumed needed a library — the script and
+the audio are nearly identical sequences by construction, so the alignment is arithmetic
+over an edit distance rather than an acoustic model. WhisperX remains the upgrade, behind
+the same stage contract, for whoever installs it and can therefore write against it.
+
+**The script wins the word; the audio wins the timing.** Aligning the other way — keeping
+whisper's words — would have been easier and would have quietly disarmed §9.2. Captions
+carry the script, `verify` open-transcribes the *render* and diffs the two, so a
+mispronunciation is a difference between what the script says and what came out. Take
+whisper's words instead and the round-trip compares the render against a transcript of
+itself, agreeing perfectly about a word the narration got wrong.
+
+**`transcribe` and `align` are alternatives, not neighbours, and the graph had to be able
+to say so.** They are §5.3's two calls, and a job runs one of them. Stages now declare what
+they **provide** rather than only what they are called: both provide `transcript`, and
+`plan_captions`, `trim` and `plan_edit` depend on `transcript` rather than on either stage.
+The alternative was an `if` about how the narration was made in every stage downstream of
+it, which is the same shape of mistake as `compile` asking how a caption was written.
+
+**A fingerprint read a spec that a stage before it had already changed.** `tts` writes
+`narration.audio_path`; `trim` measures whichever file the narration is in. The job-level
+context was built once, before the loop, so `trim` fingerprinted a spec with no narration
+on the first run and one with it on the second — a cache miss on every re-run of a job
+nothing had touched. The narration is the most expensive artifact this pipeline makes, so
+this was the review loop's cost model gone for exactly the jobs that can least afford it.
+The context is now rebuilt after any stage that rewrites the spec.
+
+**`compile`'s fingerprint excluded `narration`, correctly, until it did not.** The
+exclusion was right while `narration` named a script the graph never read. The moment the
+graph was built around a narration input, an exclusion that had been bookkeeping became a
+cached graph pointed at the wrong file. Anything a fingerprint excludes is a claim about
+what the stage reads, and it expires when the stage changes.
+
+**A narration longer than its recording fails by name.** Left alone it surfaces two stages
+later as a caption block past the end of the source — true, and useless. Holding the last
+frame to cover the overrun would be a decision about synthesizing video, and §1.1 does not
+let a stage make one of those.
+
+**`RemoteRunner` exists and one transport is written.** Phase 0's verdict was unambiguous —
+0.11x realtime, and the chunked path crashes on MPS — so `tts` is the one stage that asks
+for a worker, and it still runs locally, slowly, when there is none. What the transport
+here proves is the property `StageRequest` has claimed since phase 3 and nothing tested: a
+stage sees only its job directory, and only the parts of it that were sent. Superseded
+cache artifacts stay home, which is what separates a usable remote from a theoretical one
+on a job with a few correction cycles in it. A network transport is three methods and is
+deliberately unwritten until there is a worker to write it against.
+
+**Every stage already had something to say and the pipeline was throwing it away.** A run
+now prints what each stage did — seconds of narration and at what fraction of realtime,
+how much of the script the alignment anchored, how much `trim` proposed. It costs one
+field on `StageOutcome`, and it is the same argument as §9.1's report being numbers rather
+than a verdict: an alignment that anchored 40% of the script is not a failure, and it is
+exactly what you want to have seen before wondering why the captions drift.
+
+**What this phase does not have is a voice.** F5-TTS is not installed here, and per phase 0
+it is not something to run on the target machine either — so every number in `synth/tts.py`
+came from phase 0's benchmark rather than from a job. The fixture's voice reference is a
+tone, which proves the invocation, the file handling and the schema boundary and proves
+nothing about cloning. Two of phase 0's hazards are handled in code on its say-so: the
+teardown crash that takes the exit code with it after writing good audio, and the FFmpeg
+library collision. Both are written down where they will be found when they next fire.
+
+---
 
 ---
 

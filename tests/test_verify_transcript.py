@@ -15,9 +15,7 @@ fixture cannot mispronounce a word it never speaks.
 """
 
 import json
-import os
 import shutil
-import stat
 import subprocess
 
 import pytest
@@ -392,51 +390,11 @@ def test_the_stage_that_holds_weights_is_the_one_that_declares_it():
 
 # --- the ASR path, against a stand-in ----------------------------------------
 
-FAKE_WHISPER = """#!/usr/bin/env python3
-# A stand-in for `whisper-cli`, in the shape of the stand-in `tests/test_plan_edit.py`
-# uses for the agent. It writes what whisper.cpp's `-oj` writes — the shape
-# `synth/asr.py`'s parser is written against — reading the words from a file the
-# test put beside it. It proves the stage runs end to end and proves nothing
-# whatever about recognition.
-import json, sys
-from pathlib import Path
-
-argv = sys.argv[1:]
-prefix = Path(argv[argv.index("-of") + 1])
-words = json.loads((Path(__file__).parent / "heard.json").read_text())
-prefix.with_suffix(".json").write_text(json.dumps({
-    "result": {"language": "en"},
-    "transcription": [
-        {"offsets": {"from": round(w["t_in"] * 1000), "to": round(w["t_out"] * 1000)},
-         "text": " " + w["text"]}
-        for w in words
-    ],
-}))
-"""
-
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
-@pytest.fixture
-def whisper_stand_in(tmp_path, monkeypatch):
-    """Install a fake `whisper-cli` on PATH and return a handle to script it."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    script = bin_dir / "whisper-cli"
-    script.write_text(FAKE_WHISPER)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    # `transcribe` refuses without weights as well as without a binary, and it is
-    # right to: "installed but unusable" is the state that otherwise fails deep
-    # inside whisper.cpp with an unreadable message.
-    (tmp_path / "ggml-large-v3.bin").write_bytes(b"")
-
-    def hears(spoken):
-        (bin_dir / "heard.json").write_text(
-            json.dumps([{"t_in": w.t_in, "t_out": w.t_out, "text": w.text} for w in spoken])
-        )
-
-    return hears
+# The `whisper_stand_in` fixture lives in `conftest.py`: phase 8's `align` runs
+# the same binary for §5.3's other purpose and wants the same stand-in.
 
 
 @needs_ffmpeg

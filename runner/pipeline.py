@@ -22,7 +22,7 @@ from spec.profiles import BUILTIN_PROFILES, Encoder, RenderProfile
 
 from runner import agent, db
 from runner.cache import cache_key
-from runner.contract import StageRequest
+from runner.contract import Runner, StageRequest
 from runner.job import JobConfig
 from runner.local import LocalRunner
 from runner.stages import (
@@ -45,10 +45,20 @@ class StageOutcome:
     cache_key: str
     path: str
     cached: bool
+    note: str | None = None
+    """What the stage said about what it did — words transcribed, removals
+    proposed, seconds of narration and at what fraction of realtime.
+
+    Every stage already computed one and the pipeline threw it away. They are the
+    numbers that say whether a stage did something sensible, and the same argument
+    as §9.1's report being numbers rather than a verdict applies to them: a
+    coverage of 40% on an alignment is not a failure, and it is exactly what you
+    want to see before wondering why the captions drift."""
 
     def __str__(self) -> str:
         state = "cached " if self.cached else "ran    "
-        return f"{state}{self.profile:>12} {self.stage:<17} {self.cache_key[:12]}"
+        line = f"{state}{self.profile:>12} {self.stage:<17} {self.cache_key[:12]}"
+        return f"{line}  {self.note}" if self.note and not self.cached else line
 
 
 @dataclass
@@ -84,8 +94,14 @@ def run_job(
     encoder: Encoder | None = None,
     db_path: Path | str | None = None,
     runner: LocalRunner | None = None,
+    remote_runner: Runner | None = None,
     force: bool = False,
 ) -> JobRun:
+    """`remote_runner`, when given, takes the stages that asked for it.
+
+    Phase 0 made that concrete rather than hypothetical: `tts` is 0.11x realtime
+    on this machine (environment findings §4), so it is the one stage whose
+    `prefers_remote` is set. Everything else stays where the media is."""
     job_dir = Path(job_dir)
     # Read before anything runs, applied after everything job-level has: a
     # correction is a layer over the planners' spec, not an edit of it
@@ -123,7 +139,8 @@ def run_job(
         # and every per-profile fingerprint is taken from the spec. Interleaving
         # them would have `compile` hash a document that changed after it looked.
         spec, job_paths, job_keys = _run_job_stages(
-            run, connection, spec, resolved, job_dir, runner, force, constraints, corrections
+            run, connection, spec, resolved, job_dir, runner, remote_runner, force,
+            constraints, corrections,
         )
         run.profiles = list(resolved)
         for profile in resolved:
@@ -149,6 +166,7 @@ def _run_job_stages(
     profiles: tuple[RenderProfile, ...],
     job_dir: Path,
     runner: LocalRunner,
+    remote_runner: Runner | None,
     force: bool,
     constraints: Constraints,
     corrections: Corrections,
@@ -175,6 +193,15 @@ def _run_job_stages(
         if name not in wanted:
             continue
         stage = JOB_STAGES[name]
+        if stage.provision in keys:
+            # `transcribe` and `align` both provide `transcript` and a job asks for
+            # one of them (§5.3). Asking for both is not a merge to resolve — it is
+            # a job.json that says the narration is recorded and synthesized at
+            # once, and the second stage would silently win.
+            raise ValueError(
+                f"{name!r} and an earlier stage both provide {stage.provision!r}; "
+                f"a job runs one of them (runner/stages.py's two recipes)"
+            )
         # §5.2's one subtlety that will not announce itself: a model stage's key
         # must carry the model id and prompt version, or the cache serves the old
         # answer after exactly the change you were evaluating. `cache_key` refuses
@@ -190,9 +217,9 @@ def _run_job_stages(
             params=params,
             model_backed=stage.model_backed,
         )
-        keys[name] = key
+        keys[stage.provision] = key
         artifact = Path("stages") / f"{key}{stage.suffix}"
-        paths[name] = str(artifact)
+        paths[stage.provision] = str(artifact)
 
         cached = _is_cached(connection, key, job_dir / artifact, stage.directory) and not force
         if not cached:
@@ -208,13 +235,16 @@ def _run_job_stages(
                 },
                 params={
                     "asr": context.constraints.asr.model_dump(mode="json"),
+                    "tts": context.constraints.tts.model_dump(mode="json"),
                     "trim": context.constraints.trim.model_dump(mode="json"),
                     "model": context.constraints.agent.model,
                     "profiles": [p.model_dump(mode="json") for p in profiles],
                 },
                 output=str(artifact),
             )
-            result = runner.run(request, holds_local_weights=stage.holds_local_weights)
+            result = _runner_for(stage, runner, remote_runner).run(
+                request, holds_local_weights=stage.holds_local_weights
+            )
             if result.degraded:
                 # Deliberately not cached. A degraded artifact is what the stage
                 # produced *because it could not run* — no network, no agent, a
@@ -233,13 +263,31 @@ def _run_job_stages(
                     path=str(artifact),
                 )
         run.outcomes.append(
-            StageOutcome(stage=name, profile="job", cache_key=key, path=str(artifact), cached=cached)
+            StageOutcome(
+                stage=name, profile="job", cache_key=key, path=str(artifact), cached=cached,
+                note=None if cached else result.note,
+            )
         )
         if stage.apply is not None:
-            spec = stage.apply(spec, job_dir / artifact)
+            spec = stage.apply(spec, job_dir, str(artifact))
             applied = True
+            # The next stage's fingerprint has to see the spec as it now stands.
+            # `tts` writes `narration.audio_path` and `trim` measures the file it
+            # names, so a context built once and kept would fingerprint `trim`
+            # against a spec with no narration on the first run and one with it on
+            # the second — a cache miss on every re-run of a job that changed
+            # nothing, which is the review loop's whole cost model gone.
+            context = JobContext(
+                spec=spec, profiles=profiles, job_dir=job_dir, constraints=constraints
+            )
 
     return _write_spec(job_dir, spec, corrections, applied), paths, keys
+
+
+def _runner_for(stage, runner: LocalRunner, remote_runner: Runner | None) -> Runner:
+    """Where this stage runs. The `Runner` protocol is the whole reason this is
+    one line rather than a branch inside every stage (§5.1)."""
+    return remote_runner if (stage.prefers_remote and remote_runner is not None) else runner
 
 
 def _write_spec(
@@ -379,7 +427,10 @@ def _run_profile(
                     path=str(artifact),
                 )
         run.outcomes.append(
-            StageOutcome(stage=name, profile=profile.name, cache_key=key, path=str(artifact), cached=cached)
+            StageOutcome(
+                stage=name, profile=profile.name, cache_key=key, path=str(artifact),
+                cached=cached, note=None if cached else result.note,
+            )
         )
 
     run.renders[profile.name] = _publish(job_dir, Path(paths["render"]), spec.job_id, profile.name)

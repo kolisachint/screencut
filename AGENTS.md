@@ -31,12 +31,12 @@ put it in the design first.
 | Path | What lives there |
 |---|---|
 | `spec/` | The Pydantic models, field-origin metadata, migrations, JSON Schema + TypeScript emit |
-| `ingest/` | Recorder adapters (Cap), synthetic fixture generators |
+| `ingest/` | Recorder adapters (Cap), synthetic fixture generators — recorded and narrated |
 | `plan/` | Planners: `plan_focus`, `plan_captions`, `trim` deterministic; `plan_edit` the one model stage |
-| `synth/` | ASR and TTS stages. `asr.py` is open transcription; `align` is phase 8 (§5.3) |
+| `synth/` | §5.3's three calls, kept apart: `asr.py` open transcription, `tts.py` synthesis, `align.py` forced alignment |
 | `compile/` | Time projection, ASS captions, SVG overlays, the FFmpeg graph |
 | `verify/` | §9.1's deterministic checks, §9.2's transcript round-trip, and the report |
-| `runner/` | Stage contract, `LocalRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
+| `runner/` | Stage contract, `LocalRunner`, `RemoteRunner`, the agent-CLI adapter, cache keys, SQLite, the pipeline |
 | `review/` | The correction loop (§8): the FastAPI app, the service behind it, and the page |
 | `prefs/` | `constraints.yaml` — the hand-written tier, layered sparsely over profiles |
 | `golden/` | The deliberately bad fixture and the findings it must produce |
@@ -52,6 +52,7 @@ Top-level package names follow §12's tree literally rather than nesting under a
 make install     # package + dev dependencies
 make run         # generate the fixture and run the whole pipeline
 make take        # a Cap-format take: bundle -> job -> both renders (needs ASR)
+make narrate     # a script read in a cloned voice over a silent capture (needs TTS + ASR)
 make broken      # the deliberately bad fixture, so §9.1's checks are seen firing
 make review      # the review UI over the jobs already rendered (§8)
 make check       # tests + generated-artifact drift + TypeScript typecheck
@@ -72,6 +73,12 @@ Needs `ffmpeg` with libass and at least one installed font. On macOS that means
 caption (environment findings §8). Which option reads the filter graph from a file
 differs by version and is probed rather than assumed (`compile/ffmpeg.py`), so any
 FFmpeg from 6 to 9 works. Node is only for `make typecheck`.
+
+`make narrate` is the phase-8 recipe and wants a third thing: a Python with `f5_tts`
+installed, named by `prefs/constraints.yaml`'s `tts.python`. Phase 0 measured F5-TTS at
+0.11x realtime on the target machine and its MPS path aborts on any text long enough to be
+chunked, so `tts` is the one stage that asks for a worker (`runner/remote.py`) — and still
+runs locally, slowly, when there is none.
 
 An ingested job additionally wants two things `make run` and `make broken` do not.
 `transcribe` needs `whisper-cli` on `PATH` and `ggml-<model>.bin` under
@@ -111,6 +118,8 @@ relax one, that is a design change and belongs in `architecture.md` first.
 | Job-level stages run before the per-profile ones, never interleaved | `runner/pipeline.py` — they rewrite the spec the others fingerprint |
 | No `duration_budget` reaches a model; tiering is aspect-independent | `plan/edit.py`, §4.4.1; the fingerprint omits profiles too |
 | A degraded artifact is never cached | `runner/pipeline.py` — caching it makes one lost network permanent |
+| Synthesis is of you: reference audio, its text and a script, or it does not validate | `spec/narration.py`; decision #20, and §1.1 says it is a schema matter rather than an intent one |
+| A stage reads the spec as the stages before it left it | `runner/pipeline.py` rebuilds the job context after every `apply`; otherwise a fingerprint keys on a document that has moved |
 | A human correction is a layer over the spec, applied after every planner | `spec/corrections.py`, §8.1; a cached `plan_edit` would otherwise overwrite it |
 | §9.2 diffs the render against the *expected* transcript, never the raw one | `verify/transcript.py`; the raw diff is a number beside it, not the verdict |
 | Generated files match the models | `make check-generated`, `tests/test_generated.py` |
@@ -209,6 +218,18 @@ wrote one flag for both, so a screen capture with the mic off — an ordinary jo
 on every correct job: wherever a stage can be inapplicable as well as broken, the report
 has to be able to say which.
 
+**A fingerprint reading a spec a stage before it had already rewritten.** The job-level
+context was built once, before the loop, so `trim` fingerprinted a spec without
+`narration.audio_path` on the first run and one with it on the second — a cache miss on
+every re-run of a job nothing had touched, on the one artifact that costs an hour to
+remake. Rebuild the context after any stage that applies to the spec.
+
+**An exclusion from a fingerprint that expired.** `compile` excluded `narration` because it
+named a script the graph never read. That was right until the graph was built around a
+narration input, at which point it became a cached graph pointed at the wrong file.
+Everything a fingerprint excludes is a claim about what the stage reads, and the claim goes
+stale when the stage changes.
+
 **An FFmpeg option baked into a cached artifact.** `compile` writes the whole command into
 its manifest and `render` replays it, so a cached compile plus a toolchain upgrade replays
 an option the new binary does not have. Anything that belongs to the *binary* rather than
@@ -216,14 +237,14 @@ to the graph is `render`'s to decide and `render`'s to carry in its cache key.
 
 ## What is built, and what is blocked
 
-Phases 1–7 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
+Phases 1–8 are built. Phase 0 has been run: `docs/environment-findings.md` holds the
 measured numbers, and everything phase 4 was waiting on is settled — Cap's cursor
 format, `whisper.cpp` as the ASR backend, and the memory budget per stage.
 
-**What is still missing is a real recording and a real model call.** Phases 4 and 5 built
-the whole path and ran it against `ingest/cap_fixture.py` — a bundle in Cap's own on-disk
-format carrying every trap phase 0 measured — and against a scripted agent. Neither is the
-same thing as the real one:
+**What is still missing is a real recording, a real model call and a real voice.** Phases
+4, 5 and 8 built the whole path and ran it against `ingest/cap_fixture.py` — a bundle in
+Cap's own on-disk format carrying every trap phase 0 measured — against a scripted agent,
+and against stand-ins for both speech backends. None is the same thing as the real one:
 
 - The phase-2 focus tunables have never met real cursor data. Expect to retune them, and
   expect that to be the first honest number `plan_captions`'s `PAUSE_S` gets too.
@@ -238,6 +259,17 @@ same thing as the real one:
   taken §7.4's degradation path or run against the scripted stand-in in
   `tests/conftest.py`. That stand-in tests our code end to end and tests nothing
   about editorial taste, which is what phase 5's stop-and-reassess gate is for.
+- **No voice has been synthesized.** F5-TTS is not installed here, and per phase 0 it is
+  not something to run on the target machine either — `runner/remote.py` exists for that
+  reason. `synth/tts.py` is written against the invocation phase 0 measured, and every
+  number in it came from that benchmark rather than from a job. The narrated fixture's
+  voice reference is a *tone*: it proves the invocation, the file handling and the schema
+  boundary, and nothing whatever about cloning. Same shape of debt as ASR against a test
+  tone, one phase later.
+- **`align` is not WhisperX**, though §5.3 names it. WhisperX was never run on the target
+  machine, and a parser for output nobody has seen is what phase 0 exists to prevent — so
+  alignment anchors the script to whisper.cpp's word timings by arithmetic. WhisperX is the
+  upgrade, behind the same stage contract, for whoever can write against it.
 - **No take has been corrected.** Phase 7's loop is exercised against the fixture and the
   scripted agent, so what is proved is that a correction costs one compile and one encode.
   Which corrections you actually make most often is what §8 says should decide what the

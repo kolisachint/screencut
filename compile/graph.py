@@ -11,6 +11,12 @@ The shape of the graph, in order:
       -> composite overlays -> fill the progress pill -> burn captions
     trim the same spans of audio -> concat -> duck the bed -> loudness
 
+The audio spine is the take's own track, or the wav `tts` wrote when the
+narration is synthesized (§5.3, decision #20). Same spans either way, because a
+synthesized narration is laid down from source t=0 and §4.5 permits exactly one
+time base — so the edit cuts both without anything here needing to know which it
+is holding.
+
 Two things are worth knowing before reading it.
 
 **Cuts happen first.** Trimming before the spatial work means the expensive scale
@@ -369,20 +375,33 @@ def audio_chain(
 
 def build_graph(spec: EditSpec, profile: RenderProfile, timeline: EditedTimeline, focus: FocusPlan,
                 assets: list[OverlayAsset], ass_name: str, commands_name: str | None,
-                audio_commands_name: str | None, music_input: int | None) -> str:
+                audio_commands_name: str | None, music_input: int | None,
+                narration_input: int | None = None) -> str:
+    """`narration_input` is the synthesized narration, when there is one.
+
+    It replaces input 0's audio rather than mixing with it: a synthesized job's
+    recording is a screen capture, and whatever is on its audio track — room tone,
+    nothing at all — is not the narration. `apad` because the narration can be
+    shorter than the video it reads over, and a span past the end of it must come
+    out as silence rather than as a short segment that desynchronizes every span
+    after it in the concat.
+    """
     parts: list[str] = []
     labels: list[str] = []
+    audio_input = 0 if narration_input is None else narration_input
+    pad = "" if narration_input is None else "apad,"
     for index, span in enumerate(timeline.spans):
         parts.append(
             f"[0:v]trim=start={span.source_in:.6f}:end={span.source_out:.6f},setpts=PTS-STARTPTS[v{index}]"
         )
         parts.append(
-            f"[0:a]atrim=start={span.source_in:.6f}:end={span.source_out:.6f},asetpts=PTS-STARTPTS[a{index}]"
+            f"[{audio_input}:a]{pad}atrim=start={span.source_in:.6f}:end={span.source_out:.6f},"
+            f"asetpts=PTS-STARTPTS[a{index}]"
         )
         labels.extend([f"[v{index}]", f"[a{index}]"])
     parts.append(f"{''.join(labels)}concat=n={len(timeline.spans)}:v=1:a=1[vc][ac]")
 
-    overlay_base = 1 if music_input is None else 2
+    overlay_base = 1 + sum(entry is not None for entry in (narration_input, music_input))
     video, video_label = video_chain(spec, profile, timeline, focus, assets, overlay_base, commands_name)
     parts.extend(video)
     parts.append(f"[{video_label}]ass=f={ass_name}[vout]")

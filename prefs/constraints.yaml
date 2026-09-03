@@ -26,6 +26,17 @@ asr:
   models_dir: ~/.cache/screencut/whisper
   language: en
 
+tts:
+  # Decision #20, and the numbers that shape it are environment findings §4.
+  # F5-TTS is 0.11x realtime at best on this machine and its MPS path aborts as
+  # soon as the text needs more than one batch, so `cpu` is the only device that
+  # finishes a real narration and `runner/remote.py` is where the speed comes from.
+  # `python` points at an environment with f5_tts installed; phase 0 used one of
+  # its own because f5_tts and the ASR stack cannot share an FFmpeg.
+  backend: f5-tts
+  python: python3
+  device: cpu
+
 trim:
   # §4.6. Arithmetic proposes; plan_edit reviews (§7.1), so these can be a little
   # eager without being the last word.

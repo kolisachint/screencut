@@ -360,8 +360,13 @@ TIME_NUDGE = 1e-6
 _BOX_COLORS = ("cyan", "orange", "magenta", "yellow")
 
 
-def source_ffmpeg_command(fixture: Fixture, out_path: Path) -> list[str]:
+def source_ffmpeg_command(fixture: Fixture, out_path: Path, *, silent: bool = False) -> list[str]:
     """FFmpeg arguments for the fixture's source video.
+
+    `silent` writes no audio stream at all, which is what a screen capture with
+    the mic off looks like and what phase 8's narrated fixture needs: the
+    narration is a separate file, and a tone under it would be neither the
+    recording's audio nor the narration.
 
     `testsrc2` gives motion in every frame; a coloured box sits at each beat's
     cursor target while that beat is on screen, so "the zoom landed on the click
@@ -386,6 +391,12 @@ def source_ffmpeg_command(fixture: Fixture, out_path: Path) -> list[str]:
         silences.append(f"between(t,{speech_end},{slot_end})")
     video_chain = ",".join(boxes) if boxes else "null"
     audio_chain = f"volume=volume=0:enable='{'+'.join(silences)}'" if silences else "anull"
+    audio_inputs = [] if silent else [
+        "-f", "lavfi",
+        "-i", f"sine=frequency=220:sample_rate=48000:duration={duration}",
+    ]
+    graph = f"[0:v]{video_chain}[v]" + ("" if silent else f";[1:a]{audio_chain}[a]")
+    audio_output = [] if silent else ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
     return [
         "ffmpeg",
         "-y",
@@ -397,18 +408,15 @@ def source_ffmpeg_command(fixture: Fixture, out_path: Path) -> list[str]:
         "-flags", "+bitexact",
         "-f", "lavfi",
         "-i", f"testsrc2=size={source.width}x{source.height}:rate={source.fps}:duration={duration}",
-        "-f", "lavfi",
-        "-i", f"sine=frequency=220:sample_rate=48000:duration={duration}",
-        "-filter_complex", f"[0:v]{video_chain}[v];[1:a]{audio_chain}[a]",
+        *audio_inputs,
+        "-filter_complex", graph,
         "-map", "[v]",
-        "-map", "[a]",
+        *audio_output,
         "-map_metadata", "-1",
         "-c:v", "libx264",
         "-preset", "medium",
         "-crf", "20",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
         "-shortest",
         str(out_path),
     ]
@@ -418,11 +426,11 @@ class FfmpegMissing(RuntimeError):
     pass
 
 
-def render_source(fixture: Fixture, out_path: Path) -> Path:
+def render_source(fixture: Fixture, out_path: Path, *, silent: bool = False) -> Path:
     if shutil.which("ffmpeg") is None:
         raise FfmpegMissing("ffmpeg is not on PATH; pass --no-video to generate the spec alone")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(source_ffmpeg_command(fixture, out_path), check=True)
+    subprocess.run(source_ffmpeg_command(fixture, out_path, silent=silent), check=True)
     return out_path
 
 
