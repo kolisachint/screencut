@@ -857,7 +857,7 @@ library collision. Both are written down where they will be found when they next
 
 ---
 
-## Phase 9 — Remaining model stages
+## Phase 9 — Remaining model stages — **built, less the judgement and the take**
 
 **Goal:** the taste and language decisions, bounded by schema.
 
@@ -881,9 +881,104 @@ is four stages against a seam that already works, which is the whole reason it i
 
 - Every model stage returns a validated fragment or degrades cleanly; killing the network
   mid-job still produces a render — now a cut, cleaned, captioned one rather than a raw take.
-- Golden-set replay runs and reports per-field spec drift.
+  — **met**. `tests/test_model_stages.py` runs an ingested job with the agent unreachable
+  and asserts four degradations, a total edit, no overlays, no emphasis markers and a
+  sidecar carrying script-derived copy — with both renders on disk. The same file runs it
+  with the agent answering and asserts each fragment reached `spec.json`.
+- Golden-set replay runs and reports per-field spec drift. — **met**. `make replay` replays
+  `golden/demo_v1` and prints drift per field with the producing stage named, plus the
+  distributional half. It is part of `make check`.
 - Schema-violation rate across a replay is recorded. This is the first real measurement of
-  risk R5, and it is the number that says whether decision #13 was right.
+  risk R5, and it is the number that says whether decision #13 was right. — **met as a
+  measurement, unmet as a number.** The rate is computed, carried on every `StageResult`
+  and printed by the replay; what has produced it so far is a scripted subprocess, so it
+  says whether the meter works and nothing about the models. It reports "R5 unmeasured"
+  rather than 0% when nothing asked a model anything.
+
+**Not in this phase:** kinetic captions (which is what would *render* emphasis), the
+perceptual checks of §9.3, and the learner that reads all of this (phase 10).
+
+**How it came out.** The four stages were the small half. What the phase actually taught is
+in the seams between them.
+
+**A model stage can fail a job without failing.** `OverlayPlan` validates in isolation, so
+an overlay running from 55s to 61s is a well-formed fragment — and an invalid `EditSpec`,
+because only the spec knows the source is 60 seconds long. The stage therefore *succeeded*
+and the job died at apply time, which §7.4 forbids in so many words. The fix is the shape
+`plan_edit` already had for a different reason: the fragment is intent, and `reconcile`
+makes it a valid document. The general rule is worth more than the fix — **a fragment
+schema cannot see the document it will join, so it is never the last word on validity**,
+and every model stage writing into `EditSpec` needs the same step.
+
+**One prompt version stopped working the moment there were five prompts.** Phase 5 spelled
+it as an integer to bump by hand, which is fine with one. With five it fails in two
+directions at once: forget the bump and the cache serves last week's answer to this week's
+prompt, share the integer and editing the overlay instruction re-runs `script_draft`. The
+version is now derived from the instruction text itself, which is the same remedy this
+codebase reaches for everywhere else — where an invariant is arithmetic, let arithmetic
+hold it. There is nothing to remember, so there is nothing to forget.
+
+**The sidecar is the one per-profile model stage, and it changes what a correction costs.**
+Everything else a model decides here is aspect-independent on purpose (§4.4.1). Copy is the
+honest exception: a 20-second vertical short and a 90-second widescreen demo are two posts,
+they say different amounts, and one description would describe neither. The consequence is
+that phase 7's cost model needed restating rather than defending — **no planner re-runs, so
+the edit is not re-decided; the copy about the result is rewritten, because it is about the
+result.** A correction that changes what a viewer hears now costs one model call per
+profile. Serving the old sidecar would be §5.2's silent bug in the one place a reader would
+actually see it.
+
+**A stage that can never succeed can never be cached, and that is correct.** With no agent
+on the machine `metadata` degrades on every run, and §7.4 says a degraded artifact is not
+cached — install the agent and the next run must try again. So a fixture job stopped
+reporting `did_no_work` on its second run, and six phase-3 cache tests failed. They were
+right to: they had been passing because *no model stage ran at all*. Giving them a scripted
+agent made them tests of the cache again rather than tests of the absence of one.
+
+**"The first reply" stopped naming a stage.** The phase-5 test stand-in scripted replies by
+call order. With five model stages in one job, a test scripting one `EditPlan` silently
+handed it to `emphasis`, which runs earlier, and then failed on a degradation it never
+asked for. The stand-in now also scripts by *fragment*, keyed on the schema title in the
+prompt — which is the only part of a prompt that names its stage.
+
+**`script_draft` could not exist inside its own document's validator.** Decision #20 made a
+synthesized narration require a script, and a job that needs `script_draft` has none yet —
+so the document the stage was supposed to complete was invalid until after it had run.
+The boundary decision #20 actually draws is that the words are yours, and a brief is yours:
+`narration.brief` is `Stage.HUMAN`, the validator accepts a script *or* a brief, and
+`script_draft` refuses to run without one rather than choosing a subject from a duration and
+a cursor track. §1.1 puts written language in scope precisely because it passes through you,
+and the brief is where you are.
+
+**A guard the relaxation made necessary.** With a brief-only job now valid, `tts` could be
+reached with `narration.script` still null and would happily synthesize the empty string —
+a silent wav, rendered as a finished video. That is §7.4's worst failure shape, a job that
+looks done, so `tts` names it instead.
+
+**Emphasis returns indices, not words.** A fragment carrying word objects can come back with
+the text changed, a timing nudged, or one word quietly missing, and each of those is a
+caption that no longer matches the audio — which §9.2 would then report as a real failure.
+Indices into a list the prompt numbered cannot express any of it. The hazard traded for is
+that both sides must number identically, and that is contained by both sides calling one
+function.
+
+**Nothing renders emphasis yet, and that is §6.2's plan rather than an omission.** The first
+compiler draws plain timed blocks and ignores the word array; kinetic captions are a later,
+purely compiler-side phase. The field is populated now so that phase changes no schema and
+invalidates no golden spec — model the end state, render the simple case.
+
+**The golden set has a harness and half a corpus.** The split by origin is real and tested
+in both directions: a moved `focus.points[10].x` is a finding that names `ingest`, and a
+re-tiered segment is not a finding at all but moves the distribution. What the committed set
+cannot do yet is exercise the model half, because the one archived case is the synthetic
+fixture and it arrives with a complete spec — promoting a real take is still phase 4's
+unfinished build item. Until it lands, the distributional half runs against the scripted
+agent in `tests/test_golden_replay.py`, which is the same honest placement §9.2's
+round-trip already has one phase earlier.
+
+**Every tolerance in `Tolerances` is a guess.** They are stated in one place with their
+provenance said out loud rather than scattered as literals, so that the first real take
+moves numbers rather than code.
 
 ---
 

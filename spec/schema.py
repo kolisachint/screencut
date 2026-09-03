@@ -21,6 +21,7 @@ from pydantic.json_schema import models_json_schema
 from spec.corrections import CorrectionDiff, Corrections
 from spec.edit import EditDecisions
 from spec.editspec import EditSpec
+from spec.metadata import Metadata
 from spec.overlays import OverlayPlan
 from spec.profiles import RenderProfile
 
@@ -32,11 +33,19 @@ SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
 #: review posts and what review records (§8): the same generator serves them, so
 #: the page that edits the spec and the pipeline that reads it cannot disagree
 #: about the shape of a correction.
+#:
+#: What is *not* here is as deliberate: `EditPlan`, `EmphasisPlan` and
+#: `ScriptDraft` are intent rather than documents (§7.2). They never leave the
+#: stage that asked for them — `plan/` turns each into spec fields the same run —
+#: so emitting them would publish a shape nothing outside this repository reads.
+#: `overlay_plan` is here because it *is* a spec subtree, and `metadata` because
+#: it is a document that outlives the job, sitting beside the render (§5.4).
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "edit_spec": EditSpec,
     "render_profile": RenderProfile,
     "edit_decisions": EditDecisions,
     "overlay_plan": OverlayPlan,
+    "metadata": Metadata,
     "corrections": Corrections,
     "correction_diff": CorrectionDiff,
 }

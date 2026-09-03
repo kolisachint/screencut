@@ -52,8 +52,25 @@ trim:
 agent:
   # Decision #13: model selection is a flag on a subprocess, so this is a config
   # change and not a code change. Phase 0 measured 6-66s per call either way
-  # (environment findings §7).
+  # (environment findings §7), and the timeout is set against the 65.8s worst
+  # case rather than the median — a stage killed at the median fails roughly as
+  # often as the model is slow.
   model: anthropic/claude-sonnet-5
+  timeout_s: 300
+
+  # Sparse per-stage overrides, same rule as `profiles:` below: only differences.
+  # Phase 9's stages differ in how much thinking they deserve — overlay placement
+  # picks a template and a point out of a closed set, script drafting writes the
+  # words you will perform — and under decision #13 that difference is a line of
+  # YAML. Left empty, every stage runs on the default above.
+  #
+  # stages:
+  #   script_draft:
+  #     model: anthropic/claude-opus-5
+  #   plan_overlays:
+  #     model: anthropic/claude-haiku-4-5
+  #     timeout_s: 120
+  stages: {}
 
 voice:
   # Decision #20. Synthesis is permitted only of you, from a per-job reference

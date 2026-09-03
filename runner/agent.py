@@ -35,6 +35,7 @@ with the validation error appended, then degrade** (§7.4).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -54,13 +55,28 @@ models, so this is a default and not a finding."""
 DEFAULT_TIMEOUT_S = 300.0
 """Against phase 0's 65.8 s worst case with room to spare, not against its median."""
 
-PROMPT_VERSION = 1
-"""Bumped whenever a stage's prompt text changes.
+def prompt_version(instruction: str) -> str:
+    """A stage's prompt version, derived from the prompt itself.
 
-This is half of §5.2's one cache subtlety that will not announce itself: the same
-transcript under a revised prompt is a different artifact, and a key without this
-serves the old answer after exactly the change you were trying to evaluate. It
-looks like the prompt edit had no effect."""
+    This is half of §5.2's one cache subtlety that will not announce itself: the
+    same transcript under a revised prompt is a different artifact, and a key
+    without this serves the old answer after exactly the change you were trying
+    to evaluate. It looks like the prompt edit had no effect.
+
+    Phase 5 spelled it as an integer to bump by hand, which was fine while one
+    prompt existed. Phase 9 makes it five, and a hand-bumped integer is then two
+    failures waiting: forget it and the cache lies, share it across stages and
+    editing the overlay prompt re-runs `script_draft`. Hashing the text is the
+    same remedy this codebase reaches for everywhere else — where an invariant is
+    arithmetic, let arithmetic hold it — and it cannot be forgotten, because
+    there is nothing to remember.
+
+    Only the instruction is hashed, not the assembled prompt. The job content
+    changes per job and is already in the fingerprint; the schema comes from the
+    fragment model and moves with `stage_version`. What is left is the one part
+    that is prose a person edits, which is the part a version exists for.
+    """
+    return hashlib.sha256(instruction.encode("utf-8")).hexdigest()[:12]
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
@@ -86,6 +102,15 @@ class AgentAttempt:
     exit_code: int
     fenced: bool
     error: str = ""
+    schema_violation: bool = False
+    """The reply parsed and the schema rejected it — risk R5, and only this.
+
+    A timeout, a nonzero exit or an empty event stream is the agent not answering,
+    which says nothing about whether a schema survives contact with a model. Phase
+    0 makes the distinction sharper still: **eleven of twelve replies arrived
+    inside a ```json fence**, and counting those would put the violation rate an
+    order of magnitude high and send the mitigation after the wrong thing. The
+    fence is stripped before validation, above, so it never reaches this flag."""
 
 
 @dataclass
@@ -96,6 +121,11 @@ class AgentOutcome:
     @property
     def degraded(self) -> bool:
         return self.fragment is None
+
+    @property
+    def schema_violations(self) -> int:
+        """How many replies this stage's schema rejected. §11.1's R5 number."""
+        return sum(1 for attempt in self.attempts if attempt.schema_violation)
 
     @property
     def note(self) -> str:
@@ -232,7 +262,9 @@ def run_stage(
             outcome.attempts.append(AgentAttempt(0, fenced))
             return outcome
         except ValidationError as invalid:
-            outcome.attempts.append(AgentAttempt(0, fenced, _summarize(invalid)))
+            outcome.attempts.append(
+                AgentAttempt(0, fenced, _summarize(invalid), schema_violation=True)
+            )
             if attempt == 0:
                 current = (
                     f"{prompt}\n\nYour previous reply was rejected by the schema:\n"
@@ -257,6 +289,11 @@ def _summarize(invalid: ValidationError) -> str:
     return "; ".join(lines)
 
 
-def cache_params(model: str = DEFAULT_MODEL, prompt_version: int = PROMPT_VERSION) -> dict[str, Any]:
-    """What `runner.cache` refuses to key a model stage without (§5.2)."""
-    return {"model": model, "prompt_version": prompt_version}
+def cache_params(model: str, instruction: str) -> dict[str, Any]:
+    """What `runner.cache` refuses to key a model stage without (§5.2).
+
+    Both arguments are required. A default model here would be a second place the
+    configured model can come from, and the one that is wrong is always the
+    default — `prefs/constraints.yaml` is where it is chosen (decision #13).
+    """
+    return {"model": model, "prompt_version": prompt_version(instruction)}

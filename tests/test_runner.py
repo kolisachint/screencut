@@ -162,6 +162,31 @@ def database(tmp_path_factory) -> Path:
     return tmp_path_factory.mktemp("db") / "screencut.db"
 
 
+@pytest.fixture(autouse=True)
+def writes_copy(fake_agent):
+    """Phase 9 puts a model stage on every render: `metadata` writes the sidecar
+    §1 ends the pipeline at, and it runs for every profile of every job.
+
+    These tests are about the **cache**, and a stage that can never succeed can
+    never be cached (§7.4) — without an agent the job would re-run `metadata`
+    forever and `did_no_work` would be permanently false. So the agent is part of
+    the environment they assume, exactly as ffmpeg is; scripting it is what keeps
+    them tests of caching rather than tests of degradation.
+    """
+    fake_agent.replies(
+        {
+            "text": json.dumps(
+                {
+                    "title": "Opening the panel",
+                    "description": "A short walk through the panel and what it does.",
+                    "tags": ["fixture", "demo"],
+                }
+            )
+        }
+    )
+    return fake_agent
+
+
 def go(job: Path, database: Path, **kwargs):
     return run_job(job, [small("shorts_9x16")], encoder=Encoder.SOFTWARE, db_path=database, **kwargs)
 
@@ -170,7 +195,9 @@ def go(job: Path, database: Path, **kwargs):
 def test_the_first_run_does_the_work_and_the_second_does_none(job, database):
     first = go(job, database)
     assert not first.did_no_work
-    assert [o.stage for o in first.outcomes] == ["plan_focus", "compile", "render", "verify"]
+    assert [o.stage for o in first.outcomes] == [
+        "plan_focus", "compile", "render", "verify", "metadata"
+    ]
     assert go(job, database).did_no_work, "and it says so, which is the exit criterion"
 
 
@@ -196,7 +223,13 @@ def test_changing_only_caption_text_reruns_compile_and_render_and_nothing_upstre
     try:
         result = go(job, database)
         assert result.ran() == [
-            "shorts_9x16/compile", "shorts_9x16/render", "shorts_9x16/verify"
+            "shorts_9x16/compile", "shorts_9x16/render", "shorts_9x16/verify",
+            # `metadata` too, and it is not a dependent: it declares no upstream
+            # and reads the spoken text of this profile's render directly
+            # (`runner/stages.py`). Rewriting a caption changes what a viewer
+            # hears, so the copy describing it is stale — which is the whole
+            # argument for fingerprinting what a stage reads.
+            "shorts_9x16/metadata",
         ]
     finally:
         spec_path.write_text(original)
@@ -257,7 +290,10 @@ def test_the_job_record_carries_what_review_will_need(job, database):
             "SELECT stage, profile FROM stage_cache WHERE job_id = ?", ("run",)
         ).fetchall()
     assert row["status"] == "rendered" and row["spec_version"] >= 1
-    assert json.loads(row["degradations"]) == [], "no stage degrades until phase 5 (§7.4)"
+    assert json.loads(row["degradations"]) == [], (
+        "every stage this job runs produced its real answer — with the agent scripted, "
+        "`metadata` included (§7.4)"
+    )
     assert {r["stage"] for r in cached} == {s for s in ORDER if s != "verify_transcript"}
     assert {r["profile"] for r in cached} == {"shorts_9x16"}
 

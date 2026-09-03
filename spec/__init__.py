@@ -29,6 +29,7 @@ from spec.focus import FocusKind, FocusPoint, FocusTrack
 from spec.migrations import load_spec, load_spec_file, migrate
 from spec.narration import Narration, NarrationSource
 from spec.origin import Origin, Stage, field_origins
+from spec.metadata import Metadata, MetadataCopy
 from spec.overlays import OverlayIntent, OverlayPlan, OverlayTemplate
 from spec.profiles import (
     BUILTIN_PROFILES,
@@ -69,6 +70,8 @@ __all__ = [
     "NarrationSource",
     "Normalized",
     "Origin",
+    "Metadata",
+    "MetadataCopy",
     "OverlayIntent",
     "OverlayPlan",
     "OverlayTemplate",

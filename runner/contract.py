@@ -53,6 +53,21 @@ class StageResult(BaseModel):
     )
     note: str | None = None
 
+    agent_calls: int = Field(
+        default=0,
+        description="Round trips this stage made to the agent CLI. Zero for a deterministic stage.",
+    )
+    schema_violations: int = Field(
+        default=0,
+        description=(
+            "How many of those replies the fragment schema rejected. The honest cost of "
+            "decision #13 — a schema is a strong instruction here, not a decoding "
+            "constraint (§7.2) — and the number risk R5 is measured by. Reported per run "
+            "rather than derived later, because a cached stage makes no call and a rate "
+            "computed over cache hits is a rate over nothing."
+        ),
+    )
+
 
 class StageFailed(RuntimeError):
     """Nonzero exit, unparseable stdout, or a timeout.

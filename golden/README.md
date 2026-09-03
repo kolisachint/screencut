@@ -4,11 +4,21 @@ Fixtures whose right answer is known, so that a change to prompts, rules or
 learned defaults can be replayed against them before it takes effect
 (`../docs/architecture.md` §11).
 
-Renders are slow, so regression compares **specs, not pixels**. The replay
-harness — and the split by field origin, strict for deterministic fields and
-distributional for model-written ones (§11.1) — arrives in phase 9. What is here
-now is what phase 6 needs: a fixture that is deliberately bad, and the findings
-§9.1 must produce for it.
+Renders are slow, so regression compares **specs, not pixels**. `replay.py` is the
+harness and `make replay` runs it: it replans each case with the profile loop
+skipped entirely, then splits the diff by field origin — strict per-field for a
+deterministic producer, distributional over N runs for a model-written one
+(§11.1).
+
+```sh
+make replay                       # every case
+python3 -m golden.replay demo_v1  # one
+```
+
+A failing deterministic field is printed with the stage that produced it, which is
+usually the whole diagnosis. The distributional half prints the approved value, the
+median across runs and the spread, so a wide-but-centred distribution reads as
+noise rather than as a regression.
 
 ## What gets archived, and what does not
 
@@ -20,6 +30,22 @@ deterministic and byte-stable — the same command produces the same spec and th
 same source video on any machine — so committing 115KB of regenerable focus points
 would archive the output of a function next to the function. What is worth
 committing is the *answer*: the checks that must fail, and for which profile.
+
+## demo_v1
+
+    python -m ingest.fixtures --out {out} --job-id golden-demo --no-video
+
+The synthetic fixture, archived as a recipe. It has no `job.json`, so no stage
+rewrites its spec — which makes it exactly one thing and a good one: the **strict
+half of §11.1 over a whole real `EditSpec`**, several hundred deterministic fields
+of focus track, captions, audio and edit decisions, checked to float noise. Every
+test in this repository leans on `ingest/fixtures.py` being byte-stable, so the
+case checking that has the widest blast radius in the set.
+
+What it cannot do is exercise the model half: nothing here asks a model anything,
+so its distributions are a baseline of zeroes and `replay` reports risk R5 as
+**unmeasured** rather than as 0%. `--no-video` because a replay compares specs, and
+encoding 24 seconds per run to compare no pixels is how a harness stops being run.
 
 ## broken_v1
 
@@ -54,6 +80,16 @@ a check the fixture cannot *feed*.
 
 The first real take promoted here fixes all three at once, and it is what
 `SEAM_TOLERANCE_S` and `WER_CEILING` are waiting for.
+
+## The distributional half is waiting on the same take
+
+`Tolerances` in `replay.py` is a set of bands nothing has measured: how far the
+retained fraction may move, how many segments count as the same edit, where a cut
+may land relative to the approved one. They are stated per case, in one place, with
+their provenance said out loud — so that the first real take moves numbers rather
+than code. Until one exists, the distributional half runs against the scripted agent
+in `tests/test_golden_replay.py`, which proves the harness and nothing about the
+models. Same honest placement as §9.2 above, arrived at from the same direction.
 
 ## Two of §11's four breakages are missing
 

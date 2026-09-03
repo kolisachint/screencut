@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "MetadataCopy": {
+      "additionalProperties": false,
+      "description": "The \u00a77.2 fragment. Small and bounded, so most wrong answers are invalid\nanswers rather than plausible ones (risk R5).",
+      "properties": {
+        "description": {
+          "maxLength": 5000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "metadata"
+          }
+        },
+        "tags": {
+          "description": "Bare words, no leading '#'. Normalized by plan/metadata.py rather than trusted.",
+          "items": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Tags",
+          "type": "array",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "metadata"
+          }
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string",
+          "x-screencut-origin": {
+            "origin": "model",
+            "stage": "metadata"
+          }
+        }
+      },
+      "required": [
+        "title",
+        "description"
+      ],
+      "title": "MetadataCopy",
+      "type": "object"
+    }
+  },
+  "$id": "https://screencut.local/schemas/metadata.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One sidecar, for one render of one profile.",
+  "properties": {
+    "degraded": {
+      "default": false,
+      "description": "True when the copy is \u00a77.4's script-derived fallback rather than the model's.",
+      "title": "Degraded",
+      "type": "boolean",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    },
+    "duration_s": {
+      "description": "The render's length as the compiler projected it \u2014 measured, never reported.",
+      "minimum": 0.0,
+      "title": "Duration S",
+      "type": "number",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    },
+    "job_id": {
+      "minLength": 1,
+      "title": "Job Id",
+      "type": "string",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    },
+    "post": {
+      "$ref": "#/$defs/MetadataCopy",
+      "description": "The copy itself. Named for the post rather than `copy`, which shadows a Pydantic method.",
+      "x-screencut-origin": {
+        "origin": "model",
+        "stage": "metadata"
+      }
+    },
+    "profile": {
+      "minLength": 1,
+      "title": "Profile",
+      "type": "string",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    },
+    "render": {
+      "description": "The file this describes, relative to the job directory.",
+      "minLength": 1,
+      "title": "Render",
+      "type": "string",
+      "x-screencut-origin": {
+        "origin": "deterministic",
+        "stage": "system"
+      }
+    }
+  },
+  "required": [
+    "job_id",
+    "profile",
+    "render",
+    "duration_s",
+    "post"
+  ],
+  "title": "Metadata",
+  "type": "object"
+}

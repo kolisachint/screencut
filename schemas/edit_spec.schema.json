@@ -255,6 +255,23 @@
             "stage": "tts"
           }
         },
+        "brief": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the video should say, in your words. `script_draft` turns it into lines to read.",
+          "title": "Brief",
+          "x-screencut-origin": {
+            "origin": "deterministic",
+            "stage": "human"
+          }
+        },
         "script": {
           "anyOf": [
             {

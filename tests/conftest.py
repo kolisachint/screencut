@@ -30,17 +30,52 @@ import pytest
 from runner import agent
 
 FAKE = '''#!/usr/bin/env python3
-"""Stands in for hoocode: emits the event stream, records that it was called."""
+"""Stands in for hoocode: emits the event stream, records that it was called.
+
+Two ways to script it, because phase 9 made one of them ambiguous.
+
+A JSON **list** is replies by call order — what phase 5 wrote, and still what a
+test of the adapter itself wants: a retry, a timeout, a fence, a nonzero exit are
+all claims about the *sequence* of round trips.
+
+A JSON **object** is replies by fragment, keyed on the schema's model name as it
+appears in the prompt. Phase 9 put five model stages in one job (§7.1), so "the
+first reply" stopped naming a stage: `emphasis` runs before `plan_edit`, and a
+test scripting one `EditPlan` would silently hand it to the wrong stage and see a
+degradation it never asked for. Keying on the fragment says which stage is being
+answered, which is what those tests actually mean. A value may be a list, and
+then it is that fragment's replies in order — a retry, scoped to one stage.
+"""
 import json, pathlib, sys
 
 here = pathlib.Path(__file__).resolve().parent
 calls = here / "calls.txt"
-index = len(calls.read_text().splitlines()) if calls.exists() else 0
-with calls.open("a") as handle:
-    handle.write(sys.argv[-1][:40].replace("\\n", " ") + "\\n")
+prompt = sys.argv[-1]
+scripted = json.loads((here / "replies.json").read_text())
 
-replies = json.loads((here / "replies.json").read_text())
-reply = replies[min(index, len(replies) - 1)]
+if isinstance(scripted, dict):
+    # The fragment's own JSON Schema is in the prompt (§7.2), and its title is
+    # the model name. That is the only part of a prompt that names its stage.
+    fragment = next(
+        (name for name in scripted if '"title": "%s"' % name in prompt), "*"
+    )
+    seen = calls.read_text().split() if calls.exists() else []
+    replies = scripted.get(fragment)
+    if replies is None:
+        sys.stderr.write("no scripted reply for fragment %r" % fragment)
+        raise SystemExit(3)
+    if not isinstance(replies, list):
+        replies = [replies]
+    reply = replies[min(seen.count(fragment), len(replies) - 1)]
+    record = fragment
+else:
+    index = len(calls.read_text().splitlines()) if calls.exists() else 0
+    reply = scripted[min(index, len(scripted) - 1)]
+    record = prompt[:40].replace("\\n", " ")
+
+with calls.open("a") as handle:
+    handle.write(record + "\\n")
+
 if reply.get("exit"):
     sys.stderr.write(reply.get("text", ""))
     raise SystemExit(reply["exit"])
@@ -52,6 +87,32 @@ print(json.dumps({
     "message": {"role": "assistant", "content": [{"type": "text", "text": reply["text"]}]},
 }))
 '''
+
+
+#: A valid, boring answer for every fragment a stage can ask for. The empty
+#: object is a real answer for three of them — `EditPlan`, `EmphasisPlan` and
+#: `OverlayPlan` all default to empty lists, which is a model declining to change
+#: anything rather than a model failing. The other two have required fields, so
+#: they get the shortest thing that validates.
+#:
+#: This is the default because a test that does not care about the model should
+#: still get a job with no degradations in it: §7.4's fallbacks are the thing
+#: those tests would otherwise be silently measuring.
+DEFAULT_FRAGMENTS = {
+    "EditPlan": {"text": "{}"},
+    "EmphasisPlan": {"text": "{}"},
+    "OverlayPlan": {"text": "{}"},
+    "ScriptDraft": {"text": json.dumps({"script": "Here is the thing, and here is what it does."})},
+    "MetadataCopy": {
+        "text": json.dumps(
+            {
+                "title": "A short walk through the panel",
+                "description": "What the panel does, and how to open it.",
+                "tags": ["screencut"],
+            }
+        )
+    },
+}
 
 
 @pytest.fixture
@@ -68,15 +129,33 @@ def fake_agent(tmp_path, monkeypatch):
         directory = bin_dir
 
         def replies(self, *replies: dict) -> None:
+            """Replies by call order. For tests about the adapter's control flow."""
             (bin_dir / "replies.json").write_text(json.dumps(list(replies)))
+
+        def fragments(self, **replies) -> None:
+            """Replies by fragment, layered over `DEFAULT_FRAGMENTS`.
+
+            Sparse on purpose, the same rule as `constraints.yaml`: a test says
+            what it wants this one stage to answer, and every other stage keeps
+            answering something valid. Restating the defaults would make each
+            test carry a copy of them, and the copy is what goes stale."""
+            (bin_dir / "replies.json").write_text(
+                json.dumps({**DEFAULT_FRAGMENTS, **replies})
+            )
 
         @property
         def calls(self) -> int:
             path = bin_dir / "calls.txt"
             return len(path.read_text().splitlines()) if path.exists() else 0
 
+        def calls_for(self, fragment: str) -> int:
+            """How many times one stage was asked. Only meaningful under
+            `fragments()`, which is the mode that records which stage called."""
+            path = bin_dir / "calls.txt"
+            return path.read_text().split().count(fragment) if path.exists() else 0
+
     handle = Handle()
-    handle.replies({"text": "{}"})
+    handle.fragments()
     return handle
 
 

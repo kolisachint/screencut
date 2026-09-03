@@ -4,6 +4,13 @@ Decision #20 permits exactly one synthesis: your voice, your script, your
 reference audio. architecture.md §1.1 calls that a schema-and-config matter
 rather than a matter of intent, so it is one — a synthesized narration without an
 explicitly recorded voice reference does not validate.
+
+`brief` and `script` are the two halves of decision #8, and the origins say which
+is which: the brief is yours (`Stage.HUMAN`), the script is either yours or
+`script_draft`'s. §1.1 puts written language in scope precisely because it never
+reaches a frame without passing through you — and the brief is where you are in
+that loop, so a job with neither is a job `script_draft` refuses rather than
+invents from.
 """
 
 from __future__ import annotations
@@ -26,6 +33,11 @@ class NarrationSource(str, Enum):
 
 class Narration(SpecModel):
     source: NarrationSource = spec_field(default=NarrationSource.RECORDED, produced_by=Stage.CONFIG)
+    brief: str | None = spec_field(
+        default=None,
+        produced_by=Stage.HUMAN,
+        description="What the video should say, in your words. `script_draft` turns it into lines to read.",
+    )
     script: str | None = spec_field(
         default=None,
         produced_by=Stage.SCRIPT_DRAFT,
@@ -57,8 +69,18 @@ class Narration(SpecModel):
         if self.source is NarrationSource.SYNTHESIZED:
             if not self.voice_reference_path:
                 raise ValueError("synthesized narration requires an explicit per-job voice reference (decision #20)")
-            if not self.script:
-                raise ValueError("synthesized narration requires a script to read")
+            if not self.script and not self.brief:
+                # A script *or* the brief `script_draft` will draft one from.
+                # Decision #20's boundary is that the words are yours, and both
+                # of these are yours — `script_draft` drafts a brief, it does not
+                # choose a subject (§1.1, plan/script.py). Requiring the script
+                # itself would make a job that has not run `script_draft` yet an
+                # invalid document, which would put the stage out of reach of the
+                # one recipe that needs it.
+                raise ValueError(
+                    "synthesized narration requires a script to read, or a brief for "
+                    "script_draft to draft one from (decision #8)"
+                )
             if not self.voice_reference_text:
                 # F5-TTS conditions on what the reference says as well as on how it
                 # sounds, and phase 0 ran it with the text supplied. Letting it be

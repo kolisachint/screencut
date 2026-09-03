@@ -25,16 +25,24 @@ from pathlib import Path
 from typing import Any, Callable
 
 from compile.render import prepare
+from compile.timeline import project
+from plan import emphasis as emphasis_plan
+from plan import metadata as metadata_plan
+from plan import overlays as overlays_plan
+from plan import script as script_plan
 from plan.captions import PAUSE_S, plan_captions, tightest
+from plan.context import focus_regions
 from plan.edit import EditPlan, INSTRUCTION, build_content, reconcile
 from plan.focus import plan_focus
 from plan.trim import TrimTunables, detect_silence, trim
 from prefs import Constraints, load_constraints
-from spec.captions import Word
+from spec.captions import CaptionBlock, Word
 from spec.edit import EditDecisions, Removal, decisions_from_removals
 from spec.editspec import EditSpec
+from spec.metadata import Metadata, MetadataCopy
 from spec.migrations import load_spec_file
 from spec.narration import NarrationSource
+from spec.overlays import OverlayIntent, OverlayPlan
 from spec.profiles import Encoder, RenderProfile
 from spec.types import TIME_EPS
 from synth.align import align
@@ -69,7 +77,16 @@ class StageSpec:
     discover the limit by swapping."""
     model_backed: bool = False
     """Whether an LLM writes this artifact. Forces model id and prompt version into
-    the cache key (§5.2). Phase 5 sets the first one."""
+    the cache key (§5.2). Phase 5 sets the first one; phase 9 sets four more."""
+
+    instruction: str = ""
+    """This stage's prompt text, for the half of §5.2's key that is the prompt.
+
+    Named here rather than reached for inside the pipeline because the version is
+    *derived* from it (`runner/agent.py`): the prompt cannot be edited without the
+    key moving, and there is no integer to forget to bump. Required whenever
+    `model_backed` is set — a blank instruction would hash to a constant, which is
+    a cache key that stops distinguishing the thing it exists to distinguish."""
 
     prefers_remote: bool = False
     """Run this stage on a worker when one is configured (§5.1, decision #2).
@@ -124,6 +141,13 @@ class StageSpec:
     rather than leave a parallel document beside it for `compile` to prefer. Only
     job-level stages do this: rewriting the spec once the per-profile fingerprints
     have been taken would invalidate them behind their own backs."""
+
+    def __post_init__(self) -> None:
+        if self.model_backed and not self.instruction:
+            raise ValueError(
+                f"model stage {self.name!r} declares no instruction. Its prompt version is "
+                f"derived from that text (§5.2), and without it every prompt hashes alike."
+            )
 
     @property
     def provision(self) -> str:
@@ -286,6 +310,72 @@ def _plan_edit_fingerprint(ctx: JobContext) -> dict[str, Any]:
     return {"focus": ctx.spec.focus.model_dump(mode="json"), "duration": ctx.spec.source.duration}
 
 
+def _script_draft_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """The brief, and the shape of the recording it has to fit.
+
+    The brief is the subject; the duration is the word budget
+    (`plan/context.py`); the focus track is the pacing summary. All three are in
+    the prompt, so all three belong here — and nothing else is, because a script
+    does not depend on how the take will be cut or which aspects it renders at.
+    """
+    return {
+        "brief": ctx.spec.narration.brief,
+        "duration": ctx.spec.source.duration,
+        "focus": ctx.spec.focus.model_dump(mode="json"),
+    }
+
+
+def _emphasis_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """Almost nothing of its own, and that is correct.
+
+    The caption blocks are the entire input and they arrive through
+    `plan_captions`'s key, which already stands for the transcript behind them.
+    Hashing the blocks again here would be a copy of the inputs rather than a
+    fingerprint. What is left is the one number the prompt states directly.
+    """
+    return {"suggested_share": emphasis_plan.SUGGESTED_SHARE}
+
+
+def _plan_overlays_fingerprint(ctx: JobContext) -> dict[str, Any]:
+    """The focus track and the duration — `plan_edit`'s fingerprint, plus position.
+
+    Not the profiles: an overlay anchor is a normalized *source* point (§4.1), so
+    it is the same point for every aspect, and re-planning overlays because a
+    caption box moved would be paying a model call for geometry the model never
+    saw. Not the edit either, for the reason `compile/timeline.py` gives: overlays
+    are planned against the full source timeline and the ones that land in removed
+    material are dropped at projection.
+    """
+    return {
+        "focus": ctx.spec.focus.model_dump(mode="json"),
+        "duration": ctx.spec.source.duration,
+        "min_span_s": overlays_plan.MIN_SPAN_S,
+    }
+
+
+def _metadata_fingerprint(ctx: StageContext) -> dict[str, Any]:
+    """What a viewer of *this* render hears, and how long they hear it for.
+
+    The one per-profile model stage (`plan/metadata.py`), and the fingerprint is
+    where that is paid for honestly: the expected transcript for this profile's
+    tier threshold (§9.2) is the stage's real input, so a budget change that
+    selects different tiers is a different post and re-runs, while a crop-lag
+    tweak or an encoder change — neither of which alters a word — does not.
+
+    Deliberately not keyed on `render`. A sidecar describing a re-encode of the
+    same edit is the same sidecar, and depending on the render would spend a
+    model call every time `ENCODER` changed.
+    """
+    timeline = project(ctx.spec, ctx.profile)
+    return {
+        "profile": ctx.profile.name,
+        "aspect": f"{ctx.profile.width}x{ctx.profile.height}",
+        "spoken": ctx.spec.transcript_after_edit(timeline.threshold),
+        "script": ctx.spec.narration.script,
+        "duration": round(timeline.duration, 3),
+    }
+
+
 def _compile_fingerprint(ctx: StageContext) -> dict[str, Any]:
     """The graph depends on the whole edit and the whole profile *except* the
     encoder — which is `render`'s to decide, so changing `crf` re-encodes without
@@ -344,6 +434,32 @@ def _job_context(request: StageRequest) -> tuple[EditSpec, Path]:
     return load_spec_file(job_dir / request.inputs["spec"]), job_dir
 
 
+def _agent_for(request: StageRequest) -> tuple[str, float]:
+    """This stage's model and timeout, resolved from `constraints.yaml` upstream.
+
+    Per stage rather than per pipeline, because §7.1's surfaces differ in how
+    much thinking they deserve: picking a template and a point out of a closed
+    set is not writing the words somebody will perform. Under decision #13 that
+    is a flag on a subprocess, so it arrives here as two values in `params` and
+    costs nothing.
+    """
+    settings = request.params["agent"]
+    return settings["model"], settings["timeout_s"]
+
+
+def _model_result(request: StageRequest, outcome: agent.AgentOutcome, note: str) -> StageResult:
+    """One `StageResult` shape for every model stage, so the R5 numbers are
+    reported the same way by all five of them rather than four ways and a gap."""
+    return StageResult(
+        stage=request.stage,
+        output=request.output,
+        degraded=outcome.degraded,
+        note=note,
+        agent_calls=len(outcome.attempts),
+        schema_violations=outcome.schema_violations,
+    )
+
+
 def _run_transcribe(request: StageRequest) -> StageResult:
     """Open transcription of the recording's own audio (§5.3).
 
@@ -373,6 +489,63 @@ def _run_transcribe(request: StageRequest) -> StageResult:
     )
 
 
+def _run_script_draft(request: StageRequest) -> StageResult:
+    """The words you will perform (decision #8, §7.1).
+
+    **No degradation path**, and §7.4's table says so in the same row-shape as
+    `tts` one step later: there is no script to fall back to, and a job that
+    cannot draft one has nothing to synthesize and nothing to render. Every other
+    model stage in this pipeline returns a degraded artifact; these two halt, and
+    the difference is whether a deterministic floor exists at all.
+    """
+    spec, job_dir = _job_context(request)
+    model, timeout_s = _agent_for(request)
+
+    outcome = agent.run_stage(
+        agent.build_prompt(
+            script_plan.INSTRUCTION,
+            script_plan.ScriptDraft,
+            script_plan.content_for(
+                spec.narration.brief, spec.focus, spec.source.duration
+            ),
+        ),
+        script_plan.ScriptDraft,
+        job_dir=job_dir,
+        model=model,
+        timeout_s=timeout_s,
+    )
+    if outcome.fragment is None:
+        raise RuntimeError(
+            f"script_draft produced no script and there is nothing to fall back to "
+            f"(§7.4). {outcome.note}. Write narration.script yourself, or fix the "
+            f"agent and re-run — the job is halted rather than rendered silent."
+        )
+
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(outcome.fragment.model_dump_json(indent=2))
+    words = script_plan.word_count(outcome.fragment.script)
+    budget = script_plan.word_budget(spec.source.duration)
+    note = f"{words} words against a budget of {budget}"
+    if words > budget:
+        # Not an error here. `align` refuses the job when the narration actually
+        # overruns the source, with both real durations in hand; this is the
+        # earliest honest warning, and the pace is an estimate until a real
+        # narration is read at a real pace (`plan/context.py`).
+        note += " — the read may overrun the recording"
+    return _model_result(request, outcome, note)
+
+
+def _apply_script(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
+    draft = script_plan.ScriptDraft.model_validate_json((job_dir / artifact).read_text())
+    return EditSpec.model_validate(
+        {
+            **spec.model_dump(mode="json"),
+            "narration": {**spec.narration.model_dump(mode="json"), "script": draft.script},
+        }
+    )
+
+
 def _run_tts(request: StageRequest) -> StageResult:
     """The one synthesis this design permits (decision #20, §1.1).
 
@@ -390,10 +563,21 @@ def _run_tts(request: StageRequest) -> StageResult:
             "synthesizing over a voice that is already there."
         )
 
+    if not (narration.script or "").strip():
+        # Reachable now that `script_draft` can be the thing that supplies one
+        # (spec/narration.py permits a brief-only job so that stage can exist).
+        # Synthesizing an empty string writes a silent wav that renders as a
+        # finished video with no narration, which is §7.4's worst failure shape:
+        # a job that looks done.
+        raise RuntimeError(
+            "tts has no script to read. Supply narration.script, or add script_draft "
+            "to job.json ahead of tts (runner/stages.py's synthesized recipe)."
+        )
+
     settings = request.params["tts"]
     out = job_dir / request.output
     result = synthesize(
-        narration.script or "",
+        narration.script,
         reference=job_dir / narration.voice_reference_path,
         reference_text=narration.voice_reference_text or "",
         out_wav=out,
@@ -501,8 +685,6 @@ def _run_plan_captions(request: StageRequest) -> StageResult:
 
 
 def _apply_captions(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
-    from spec.captions import CaptionBlock
-
     blocks = [
         CaptionBlock.model_validate(entry)
         for entry in json.loads((job_dir / artifact).read_text())
@@ -570,6 +752,7 @@ def _run_plan_edit(request: StageRequest) -> StageResult:
         for entry in json.loads((job_dir / request.inputs["trim"]).read_text())
     ]
     words = [Word(t_in=w.t_in, t_out=w.t_out, text=w.text) for w in transcript.words]
+    model, timeout_s = _agent_for(request)
 
     outcome = agent.run_stage(
         agent.build_prompt(
@@ -579,7 +762,8 @@ def _run_plan_edit(request: StageRequest) -> StageResult:
         ),
         EditPlan,
         job_dir=job_dir,
-        model=request.params["model"],
+        model=model,
+        timeout_s=timeout_s,
     )
     if outcome.fragment is not None:
         decisions = reconcile(outcome.fragment, proposals, spec.source.duration)
@@ -589,12 +773,7 @@ def _run_plan_edit(request: StageRequest) -> StageResult:
     out = job_dir / request.output
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(decisions.model_dump_json(indent=2))
-    return StageResult(
-        stage=request.stage,
-        output=request.output,
-        degraded=outcome.degraded,
-        note=outcome.note,
-    )
+    return _model_result(request, outcome, outcome.note)
 
 
 def _apply_edit(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
@@ -602,6 +781,166 @@ def _apply_edit(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
     return EditSpec.model_validate(
         {**spec.model_dump(mode="json"), "edit": decisions.model_dump(mode="json")}
     )
+
+
+def _run_emphasis(request: StageRequest) -> StageResult:
+    """Which words carry the weight (§7.1). Degrades to none of them (§7.4).
+
+    The artifact is the caption blocks with `emphasis` set, not the index list:
+    the indices are a prompt-local address and mean nothing outside the numbering
+    that produced them, while the blocks are what `apply` puts in the spec.
+    """
+    spec, job_dir = _job_context(request)
+    blocks = [
+        CaptionBlock.model_validate(entry)
+        for entry in json.loads((job_dir / request.inputs["captions"]).read_text())
+    ]
+    model, timeout_s = _agent_for(request)
+
+    outcome = agent.run_stage(
+        agent.build_prompt(
+            emphasis_plan.INSTRUCTION,
+            emphasis_plan.EmphasisPlan,
+            emphasis_plan.build_content(blocks),
+        ),
+        emphasis_plan.EmphasisPlan,
+        job_dir=job_dir,
+        model=model,
+        timeout_s=timeout_s,
+    )
+    plan = outcome.fragment or emphasis_plan.EmphasisPlan()
+    blocks, marked, dropped = emphasis_plan.apply(blocks, plan)
+
+    total = len(emphasis_plan.numbered_words(blocks))
+    note = outcome.note if outcome.degraded else (
+        f"{marked} of {total} words emphasized ({marked / total:.0%})" if total else "no words"
+    )
+    if dropped:
+        # Reported rather than retried (`plan/emphasis.py`), so it has to be
+        # visible somewhere — a stage silently discarding a third of the model's
+        # answer is the kind of thing that is only ever found by wondering.
+        note += f"; {dropped} indices out of range"
+
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps([b.model_dump(mode="json") for b in blocks], indent=2))
+    return _model_result(request, outcome, note)
+
+
+def _apply_emphasis(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
+    """The same shape as `_apply_captions`, and the same reason: round-tripped
+    through validation so a bad block fails beside the stage that made it."""
+    blocks = [
+        CaptionBlock.model_validate(entry)
+        for entry in json.loads((job_dir / artifact).read_text())
+    ]
+    return EditSpec.model_validate(
+        {**spec.model_dump(mode="json"), "captions": [b.model_dump(mode="json") for b in blocks]}
+    )
+
+
+def _run_plan_overlays(request: StageRequest) -> StageResult:
+    """Template, anchor and text out of a closed set (§6.3). Degrades to none (§7.4).
+
+    Note what `reconcile` is doing between the fragment and the artifact: an
+    overlay running past the end of the source is a valid `OverlayIntent` and an
+    invalid `EditSpec`, so without it a model stage would fail the whole job at
+    apply time — which §7.4 forbids in so many words.
+    """
+    spec, job_dir = _job_context(request)
+    transcript = Transcript.model_validate_json(
+        (job_dir / request.inputs["transcript"]).read_text()
+    )
+    words = [Word(t_in=w.t_in, t_out=w.t_out, text=w.text) for w in transcript.words]
+    model, timeout_s = _agent_for(request)
+
+    outcome = agent.run_stage(
+        agent.build_prompt(
+            overlays_plan.INSTRUCTION,
+            OverlayPlan,
+            overlays_plan.build_content(
+                words, focus_regions(spec.focus), spec.source.duration
+            ),
+        ),
+        OverlayPlan,
+        job_dir=job_dir,
+        model=model,
+        timeout_s=timeout_s,
+    )
+    proposed = outcome.fragment or OverlayPlan()
+    overlays = overlays_plan.reconcile(proposed, spec.source.duration)
+
+    dropped = len(proposed.overlays) - len(overlays)
+    note = outcome.note if outcome.degraded else f"{len(overlays)} overlays"
+    if dropped:
+        note += f"; {dropped} dropped as out of range or too brief"
+
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps([o.model_dump(mode="json") for o in overlays], indent=2))
+    return _model_result(request, outcome, note)
+
+
+def _apply_overlays(spec: EditSpec, job_dir: Path, artifact: str) -> EditSpec:
+    overlays = [
+        OverlayIntent.model_validate(entry)
+        for entry in json.loads((job_dir / artifact).read_text())
+    ]
+    return EditSpec.model_validate(
+        {**spec.model_dump(mode="json"), "overlays": [o.model_dump(mode="json") for o in overlays]}
+    )
+
+
+def _run_metadata(request: StageRequest) -> StageResult:
+    """Copy for the post (§1.1), per profile (`plan/metadata.py`).
+
+    The last stage of a job and the only per-profile model stage. Everything in
+    the sidecar that is a *fact* — which render, how long — is written here from
+    what the compiler projected, never from the fragment: a sidecar claiming a
+    duration the file does not have is worse than no sidecar (§7.2's rule about
+    a model reporting numbers on itself).
+    """
+    spec, profile, job_dir = _context(request)
+    timeline = project(spec, profile)
+    spoken = spec.transcript_after_edit(timeline.threshold)
+    model, timeout_s = _agent_for(request)
+
+    outcome = agent.run_stage(
+        agent.build_prompt(
+            metadata_plan.INSTRUCTION,
+            MetadataCopy,
+            metadata_plan.build_content(
+                profile=profile.name,
+                aspect=f"{profile.width}x{profile.height}",
+                duration=timeline.duration,
+                spoken=spoken,
+                script=spec.narration.script,
+            ),
+        ),
+        MetadataCopy,
+        job_dir=job_dir,
+        model=model,
+        timeout_s=timeout_s,
+    )
+    if outcome.fragment is not None:
+        copy = metadata_plan.normalize(outcome.fragment)
+    else:
+        copy = metadata_plan.derive_copy(spoken, job_id=spec.job_id)
+
+    sidecar = Metadata(
+        job_id=spec.job_id,
+        profile=profile.name,
+        render=f"renders/{spec.job_id}_{profile.name}.mp4",
+        duration_s=timeline.duration,
+        post=copy,
+        degraded=outcome.degraded,
+    )
+    out = job_dir / request.output
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(sidecar.model_dump_json(indent=2))
+
+    note = outcome.note if outcome.degraded else f"{copy.title!r}, {len(copy.tags)} tags"
+    return _model_result(request, outcome, note)
 
 
 def _run_plan_focus(request: StageRequest) -> StageResult:
@@ -833,6 +1172,17 @@ JOB_STAGES: dict[str, StageSpec] = {
     stage.name: stage
     for stage in (
         StageSpec(
+            name="script_draft",
+            instruction=script_plan.INSTRUCTION,
+            version=1,
+            depends_on=(),
+            fingerprint=_script_draft_fingerprint,
+            run=_run_script_draft,
+            apply=_apply_script,
+            model_backed=True,
+            provides="script",
+        ),
+        StageSpec(
             name="transcribe",
             version=1,
             depends_on=(),
@@ -873,6 +1223,17 @@ JOB_STAGES: dict[str, StageSpec] = {
             fingerprint=_plan_captions_fingerprint,
             run=_run_plan_captions,
             apply=_apply_captions,
+            provides="captions",
+        ),
+        StageSpec(
+            name="emphasis",
+            instruction=emphasis_plan.INSTRUCTION,
+            version=1,
+            depends_on=("captions",),
+            fingerprint=_emphasis_fingerprint,
+            run=_run_emphasis,
+            apply=_apply_emphasis,
+            model_backed=True,
         ),
         StageSpec(
             name="trim",
@@ -883,11 +1244,22 @@ JOB_STAGES: dict[str, StageSpec] = {
         ),
         StageSpec(
             name="plan_edit",
+            instruction=INSTRUCTION,
             version=1,
             depends_on=("transcript", "trim"),
             fingerprint=_plan_edit_fingerprint,
             run=_run_plan_edit,
             apply=_apply_edit,
+            model_backed=True,
+        ),
+        StageSpec(
+            name="plan_overlays",
+            instruction=overlays_plan.INSTRUCTION,
+            version=1,
+            depends_on=("transcript",),
+            fingerprint=_plan_overlays_fingerprint,
+            run=_run_plan_overlays,
+            apply=_apply_overlays,
             model_backed=True,
         ),
     )
@@ -906,36 +1278,56 @@ per-profile fingerprints are taken from the spec. Interleaving the two groups
 would have `compile` hash a spec that changed after it looked."""
 
 JOB_ORDER: tuple[str, ...] = (
-    "tts", "align", "transcribe", "plan_captions", "trim", "plan_edit",
+    "script_draft", "tts", "align", "transcribe",
+    "plan_captions", "emphasis", "trim", "plan_edit", "plan_overlays",
 )
 """`plan_captions` sits ahead of `trim` because §4.5 lets it: captions are planned
 against the full source timeline and `compile` applies the edit, so the two do not
 depend on each other in either direction. The order here is the order they run in,
-and only `plan_edit`'s dependence on `trim` is load-bearing.
+and only three dependencies are load-bearing: `tts` on `script_draft`, `plan_edit`
+on `trim`, and `emphasis` on `plan_captions`.
 
-`tts` and `align` lead because everything about a synthesized job waits on the
-narration existing, which is §5's flowchart exactly: `plan_focus` is the only
-stage with no audio dependency, and it is per-profile. `align` and `transcribe`
-are alternatives rather than neighbours — both provide `transcript`, and a job
-asks for one of them — so their order relative to each other never comes up."""
+`script_draft`, `tts` and `align` lead because everything about a synthesized job
+waits on the narration existing, which is §5's flowchart exactly: `plan_focus` is
+the only stage with no audio dependency, and it is per-profile. `align` and
+`transcribe` are alternatives rather than neighbours — both provide `transcript`,
+and a job asks for one of them — so their order relative to each other never comes
+up.
+
+`plan_overlays` is last of the job-level stages and depends on nothing but the
+transcript. It could sit anywhere after one; last is where it does the least
+damage to read, since it is the only one whose artifact no later stage consumes."""
 
 #: The two job recipes, which are two ways of getting words with timings (§5.3).
 #: Named here rather than assembled by whoever writes a `job.json`, because the
 #: difference between them is a design fact — a take is narrated by you or by
 #: your voice reading a script, and nothing else about the pipeline changes.
-RECORDED_STAGES: tuple[str, ...] = ("transcribe", "plan_captions", "trim", "plan_edit")
-SYNTHESIZED_STAGES: tuple[str, ...] = ("tts", "align", "plan_captions", "trim", "plan_edit")
+RECORDED_STAGES: tuple[str, ...] = (
+    "transcribe", "plan_captions", "emphasis", "trim", "plan_edit", "plan_overlays",
+)
+SYNTHESIZED_STAGES: tuple[str, ...] = (
+    "tts", "align", "plan_captions", "emphasis", "trim", "plan_edit", "plan_overlays",
+)
+DRAFTED_STAGES: tuple[str, ...] = ("script_draft", *SYNTHESIZED_STAGES)
+"""The synthesized recipe for a job that arrives with a brief instead of a script
+(decision #8). A third recipe rather than a flag on the second, because which
+stages run is what `job.json` says and nothing else — inferring `script_draft`
+from `narration.script is None` would make an empty field mean two different
+things again, which is the confusion `runner/job.py` exists to end."""
 
 #: What each job-level **provision** is called in a dependent's `inputs`.
 #: Keyed by provision rather than by stage: `transcribe` and `align` are two ways
 #: to get one thing, and a dependent that had to know which it got would carry an
 #: `if` about how the narration was made.
 JOB_INPUT_NAMES: dict[str, str] = {
+    "script": "script",
     "transcript": "transcript",
     "narration": "narration",
     "captions": "captions",
     "trim": "trim",
     "edit": "edit",
+    "emphasis": "emphasis",
+    "plan_overlays": "overlays",
 }
 
 
@@ -983,11 +1375,28 @@ STAGES: dict[str, StageSpec] = {
             run=_run_verify,
             job_inputs=("trim",),
         ),
+        StageSpec(
+            name="metadata",
+            instruction=metadata_plan.INSTRUCTION,
+            version=1,
+            depends_on=(),
+            fingerprint=_metadata_fingerprint,
+            run=_run_metadata,
+            model_backed=True,
+        ),
     )
 }
 
-ORDER: tuple[str, ...] = ("plan_focus", "compile", "render", "verify_transcript", "verify")
-"""Topological order. Five stages do not need a sort; thirty will."""
+ORDER: tuple[str, ...] = (
+    "plan_focus", "compile", "render", "verify_transcript", "verify", "metadata",
+)
+"""Topological order. Six stages do not need a sort; thirty will.
+
+`metadata` declares no dependencies and is last anyway. It reads the spec and the
+profile directly (`_metadata_fingerprint`) rather than any upstream artifact, and
+depending on `render` would make a sidecar describing the same edit re-run every
+time the encoder changed. Last is where it belongs for a duller reason: it is the
+copy for a post, and a post is the thing you write once the video exists."""
 
 #: What each stage calls its upstream artifacts in `StageRequest.inputs`.
 INPUT_NAMES: dict[str, str] = {
@@ -996,6 +1405,7 @@ INPUT_NAMES: dict[str, str] = {
     "render": "render",
     "verify_transcript": "round_trip",
     "verify": "verify",
+    "metadata": "metadata",
 }
 
 

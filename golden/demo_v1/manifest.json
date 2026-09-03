@@ -1,0 +1,9 @@
+{
+  "recipe": {
+    "module": "ingest.fixtures",
+    "args": ["--out", "{out}", "--job-id", "golden-demo", "--no-video"]
+  },
+  "profiles": ["shorts_9x16", "demo_16x9"],
+  "runs": 1,
+  "note": "The synthetic fixture, archived as a recipe (see README). No job.json, so no stage rewrites the spec: this case is the strict half of 11.1 over a whole real EditSpec, and its distributional half is a baseline of zeroes. --no-video because a replay compares specs, not pixels."
+}

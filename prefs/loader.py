@@ -69,11 +69,51 @@ class TrimConstraints(BaseModel):
     filler_words: list[str] = Field(default_factory=lambda: ["um", "uh", "erm", "uhm", "mmm", "hmm"])
 
 
+class StageAgent(BaseModel):
+    """One stage's override. Null means "whatever the default is"."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str | None = None
+    timeout_s: float | None = Field(default=None, gt=0.0)
+
+
+class ResolvedAgent(BaseModel):
+    """What a model stage actually runs with, defaults already applied."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str
+    timeout_s: float
+
+
 class AgentConstraints(BaseModel):
-    """Which model the LLM stages run on (decision #13)."""
+    """Which model each LLM stage runs on (decision #13).
+
+    One default plus sparse per-stage overrides, the same shape as `profiles:`
+    above and for the same reason: a block that restates the default is a second
+    source of truth, and the drifted one is always the one being read.
+
+    Per-stage exists because phase 9's stages differ in how much thinking they
+    deserve. Overlay placement is not script drafting: one picks a template and a
+    point from a closed set, the other writes the words you will perform. Under
+    decision #13 that difference costs a line of YAML rather than a code change,
+    which is most of what decision #13 bought.
+    """
 
     model_config = ConfigDict(extra="forbid")
     model: str = "anthropic/claude-sonnet-5"
+    timeout_s: float = Field(default=300.0, gt=0.0)
+    """Against phase 0's 65.8s worst case with room to spare, not against its
+    median (environment findings §7). A stage killed at the median fails roughly
+    as often as the model is slow."""
+
+    stages: dict[str, StageAgent] = Field(default_factory=dict)
+
+    def for_stage(self, name: str) -> ResolvedAgent:
+        override = self.stages.get(name) or StageAgent()
+        return ResolvedAgent(
+            model=override.model or self.model,
+            timeout_s=override.timeout_s if override.timeout_s is not None else self.timeout_s,
+        )
 
 
 class VoiceConstraints(BaseModel):
